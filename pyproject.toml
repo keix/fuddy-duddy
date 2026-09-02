@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.mypy]
+mypy_path = "src"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "pyxel"
+ignore_missing_imports = true
