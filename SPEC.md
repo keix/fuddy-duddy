@@ -27,7 +27,12 @@ EventSource ──SyscallEvent──▶ World ──state──▶ Scene ──C
 - **S2** EXIT clears `in_syscall` and records `result` in `process.last_result`.
 - **S3** A successful `openat` (EXIT result >= 0) creates `fds[result]` whose
   `target` is the `path` given at ENTER. The model must pair the EXIT with the
-  pending ENTER to do this.
+  pending ENTER to do this. Pairing rules: the model keeps a single pending
+  ENTER slot and a new ENTER overwrites it; an EXIT pairs only when its name
+  matches the pending ENTER's; orphan or mismatched EXITs perform S2
+  bookkeeping only. An EXIT with `result=None` is recorded verbatim and never
+  creates or removes FDs. (Per-pid pairing is deferred until the world holds
+  more than one process.)
 - **S4** A failed syscall (result < 0) changes no state other than S2's
   bookkeeping. No FD is created.
 - **S5** A successful `close` removes `fds[event.fd]`.
@@ -48,12 +53,19 @@ kernel space below.
 - **R4** While a syscall is blocked (ENTER with no EXIT yet), the pulse stays
   below the boundary indefinitely, labeled with the syscall name (Text below
   the boundary).
-- **R5** Within 30 frames of an EXIT (after the pulse has landed), no pulse
-  remains below the boundary, and the result is shown in userland as
-  `= {result}` with color `COL_OK`.
+- **R5** Within 30 frames of an EXIT, no pulse remains below the boundary, and
+  the result is shown in userland as `= {result}` with color `COL_OK`.
+  Temporal invariant: the result text must never be visible while its pulse is
+  still below the boundary — the value arrives with the messenger. Once shown,
+  it persists at least until the next ENTER; after that it is free. Once the
+  pulse has returned, kernel space holds only static furniture (backdrop,
+  boundary, labels, FD bar) — no syscall-specific leftovers of any command
+  type, including the syscall name Text.
 - **R6** A failed syscall's result text uses `COL_FAIL` instead.
-- **R7** While an FD is open, its number appears as Text at y >= `FD_BAR_Y`;
-  after close it disappears.
+- **R7** While an FD is open, an entry whose Text begins with the fd number
+  appears at y >= `FD_BAR_Y`; after close it disappears. The band at
+  y >= `FD_BAR_Y` is reserved exclusively for open-FD entries — nothing else
+  may draw Text there.
 - **R8** Unknown syscalls still cross the boundary (R3 applies). Coverage
   degrades gracefully: unknown names lose semantics, never the crossing.
 - Transient effects (impact flashes etc.) are welcome but must die within 30

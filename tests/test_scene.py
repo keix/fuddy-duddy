@@ -5,7 +5,7 @@ boundary things appear on and when, never exact coordinates or shapes.
 """
 
 from fuddy_duddy.render import BOUNDARY_Y, COL_FAIL, COL_OK, FD_BAR_Y, Line, Rect
-from helpers import circles, enter, exited, run_frames, texts
+from helpers import circles, enter, exited, make_app, run_frames, texts
 
 
 def near_boundary(command: object) -> bool:
@@ -43,9 +43,21 @@ def test_read_exit_returns_to_userland():  # R5
     script = [(0, enter("read", fd=3)), (40, exited("read", 128))]
     commands = run_frames(script, 120)
     assert not any(c.y > BOUNDARY_Y for c in circles(commands))
+    assert not any(t.text == "read" and t.y > BOUNDARY_Y for t in texts(commands))
     assert any(
         t.text == "= 128" and t.y < BOUNDARY_Y and t.color == COL_OK for t in texts(commands)
     )
+
+
+def test_result_waits_for_the_pulse_to_return():  # R5 temporal invariant
+    script = [(0, enter("read", fd=3)), (40, exited("read", 128))]
+    app = make_app(script)
+    for _ in range(120):
+        app.step()
+        commands = app.commands()
+        pulse_in_kernel = any(c.y > BOUNDARY_Y for c in circles(commands))
+        result_shown = any(t.text == "= 128" for t in texts(commands))
+        assert not (pulse_in_kernel and result_shown)
 
 
 def test_failed_syscall_reports_failure():  # R6
@@ -59,7 +71,7 @@ def test_failed_syscall_reports_failure():  # R6
 def test_open_fd_appears_in_fd_bar():  # R7
     script = [(0, enter("openat", path="README.md")), (40, exited("openat", 3))]
     commands = run_frames(script, 120)
-    assert any("3" in t.text and t.y >= FD_BAR_Y for t in texts(commands))
+    assert any(t.text.startswith("3") and t.y >= FD_BAR_Y for t in texts(commands))
 
 
 def test_closed_fd_leaves_fd_bar():  # R7
@@ -70,7 +82,7 @@ def test_closed_fd_leaves_fd_bar():  # R7
         (120, exited("close", 0)),
     ]
     commands = run_frames(script, 200)
-    assert not any("3" in t.text and t.y >= FD_BAR_Y for t in texts(commands))
+    assert not any(t.y >= FD_BAR_Y for t in texts(commands))
 
 
 def test_unknown_syscall_still_crosses_boundary():  # R8

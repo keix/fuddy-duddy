@@ -20,9 +20,13 @@ def make_world() -> World:
     return World(Process(pid=PID, name="cat"))
 
 
+def make_app(script: list[tuple[int, SyscallEvent]]) -> App:
+    return App(make_world(), Scene(), ScriptedSource(script))
+
+
 def run_frames(script: list[tuple[int, SyscallEvent]], frames: int) -> list[Command]:
     """Drive a fresh app for `frames` frames and return the final frame's commands."""
-    app = App(make_world(), Scene(), ScriptedSource(script))
+    app = make_app(script)
     for _ in range(frames):
         app.step()
     return app.commands()
