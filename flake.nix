@@ -16,6 +16,7 @@
       # the platform libraries below at runtime.
       runtimeLibs = with pkgs; [
         libGL
+        mesa
         libxkbcommon
         wayland
         alsa-lib
@@ -37,7 +38,11 @@
           pkgs.strace
         ];
 
-        env.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
+        # GL comes from nix's own mesa (works on non-NixOS hosts too);
+        # /run/opengl-driver/lib lets NixOS hosts provide their driver instead.
+        env.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs
+          + ":/run/opengl-driver/lib";
+        env.LIBGL_DRIVERS_PATH = "${pkgs.mesa}/lib/dri";
 
         shellHook = ''
           if [ ! -d .venv ]; then
@@ -46,6 +51,7 @@
             .venv/bin/pip -q install pyxel pytest
           fi
           source .venv/bin/activate
+          export PYTHONPATH="$PWD/src''${PYTHONPATH:+:$PYTHONPATH}"
         '';
       };
     };
