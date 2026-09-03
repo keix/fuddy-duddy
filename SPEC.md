@@ -161,9 +161,12 @@ An `EventSource` (implements `poll(frame)`) that paces live events onto frames.
 
 - **P1** Every fed event is released exactly once, in FIFO order, across
   successive `poll` calls.
-- **P2** At most one event is released per frame, and consecutive releases are
+- **P2** At most one event is released per frame. Consecutive releases are
   separated by at least a minimum visual gap, so a burst of fast syscalls stays
-  watchable. `poll` is called with monotonically non-decreasing frame numbers.
+  watchable — and a release of an ENTER holds longer than that (a larger
+  `ENTER_HOLD_FRAMES`), long enough for the pulse it starts to descend fully
+  into kernel space before its EXIT is released and sends it back. `poll` is
+  called with monotonically non-decreasing frame numbers.
 - **P3** `feed` may run on a different thread than `poll`; the Director is
   thread-safe.
 - **P4** With nothing fed (or nothing yet due), `poll` returns `[]`.

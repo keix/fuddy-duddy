@@ -2,7 +2,7 @@
 
 from itertools import pairwise
 
-from fuddy_duddy.director import MIN_GAP_FRAMES, Director
+from fuddy_duddy.director import ENTER_HOLD_FRAMES, MIN_GAP_FRAMES, Director
 from fuddy_duddy.event import Phase, SyscallEvent
 
 
@@ -36,6 +36,15 @@ def test_at_most_one_release_per_frame():  # P2
     for name in "abcde":
         director.feed(ev(name))
     assert all(len(director.poll(frame)) <= 1 for frame in range(400))
+
+
+def test_enter_is_held_so_its_pulse_can_cross():  # P2
+    director = Director()
+    director.feed(SyscallEvent(1, "read", Phase.ENTER))
+    director.feed(SyscallEvent(1, "read", Phase.EXIT, result=0))
+    fired = [frame for frame in range(200) if director.poll(frame)]
+    assert len(fired) == 2
+    assert fired[1] - fired[0] >= ENTER_HOLD_FRAMES
 
 
 def test_releases_are_paced():  # P2
