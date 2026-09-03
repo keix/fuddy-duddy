@@ -39,6 +39,9 @@ class World:
         Returns the event unchanged so callers can forward it to Scene.notify.
         """
         process = self.process
+        if process.pid == 0:
+            # S0: adopt the real pid from the first observed event.
+            process.pid = event.pid
         if event.phase is Phase.ENTER:
             # S1: the process is now inside this syscall.
             process.in_syscall = event.name

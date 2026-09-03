@@ -23,6 +23,9 @@ EventSource ──SyscallEvent──▶ World ──state──▶ Scene ──C
 
 ## Model semantics (tests/test_model.py)
 
+- **S0** If `process.pid` is 0 (unknown), an applied event adopts its `pid`. The
+  live collector starts the world before the child's pid is known; the first
+  observed event fills it in.
 - **S1** ENTER sets `process.in_syscall` to the syscall name.
 - **S2** EXIT clears `in_syscall` and records `result` in `process.last_result`.
 - **S3** A successful `openat` (EXIT result >= 0) creates `fds[result]` whose

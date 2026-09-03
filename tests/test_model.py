@@ -1,6 +1,13 @@
-"""Semantic contract for the world model (SPEC.md S1-S6)."""
+"""Semantic contract for the world model (SPEC.md S0-S6)."""
 
-from helpers import enter, exited, make_world
+from fuddy_duddy.model import Process, World
+from helpers import PID, enter, exited, make_world
+
+
+def test_pid_is_adopted_from_first_event_when_unknown():  # S0
+    world = World(Process(pid=0, name="cat"))
+    world.apply(enter("read", fd=3))
+    assert world.process.pid == PID
 
 
 def test_enter_marks_process_in_syscall():  # S1
