@@ -13,3 +13,5 @@ class SyscallEvent:
     name: str
     phase: Phase
     result: int | None = None
+    path: str | None = None
+    fd: int | None = None

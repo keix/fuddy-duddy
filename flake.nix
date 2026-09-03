@@ -48,7 +48,7 @@
           if [ ! -d .venv ]; then
             ${python}/bin/python -m venv .venv
             .venv/bin/pip -q install --upgrade pip
-            .venv/bin/pip -q install pyxel pytest
+            .venv/bin/pip -q install pyxel pytest ruff mypy
           fi
           source .venv/bin/activate
           export PYTHONPATH="$PWD/src''${PYTHONPATH:+:$PYTHONPATH}"
