@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from fuddy_duddy.syscalls_x86_64 import NR
-from fuddy_duddy.wire import WireEnter, WireEvent, WireExit, WireExited, parse_line
+from fuddy_duddy.wire import WireEnter, WireEvent, WireExit, WireExited, WireSpawn, parse_line
 
 ROOT = Path(__file__).resolve().parent.parent
 COLLECTOR = ROOT / "collector"
@@ -106,6 +106,41 @@ def test_child_stdio_passes_through(tracer: Path, tmp_path: Path) -> None:
 def test_tracer_mirrors_child_exit_code(tracer: Path, tmp_path: Path) -> None:
     proc, _ = run_story(tracer, tmp_path)
     assert proc.returncode == 0
+
+
+def test_follows_fork_into_the_child(tracer: Path) -> None:
+    proc = subprocess.run(
+        [str(tracer), str(COLLECTOR / "fixtures" / "fork_exec")],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    events = parse_stream(proc.stderr)
+
+    spawns = [e for e in events if isinstance(e, WireSpawn)]
+    assert spawns, "no SPAWN emitted for the fork"
+    child = spawns[0].child
+
+    parent = spawns[0].pid
+    assert child != parent
+    # The child is actually traced: it produces its own events under its pid.
+    assert any(e.pid == child for e in events)
+    # And the child reaches execve (nr for execve) after the fork.
+    assert any(
+        isinstance(e, WireEnter) and e.pid == child and e.nr == NR["execve"] for e in events
+    )
+
+
+def test_execve_path_is_decoded(tracer: Path) -> None:
+    proc = subprocess.run(
+        [str(tracer), str(COLLECTOR / "fixtures" / "fork_exec")],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    events = parse_stream(proc.stderr)
+    execs = [e for e in events if isinstance(e, WireEnter) and e.nr == NR["execve"]]
+    assert any(e.strings.get(0) == "/bin/true" for e in execs), "execve path not decoded at str0"
 
 
 def test_enter_is_emitted_while_child_is_blocked(tracer: Path) -> None:

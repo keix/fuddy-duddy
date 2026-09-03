@@ -15,7 +15,43 @@ from fuddy_duddy.render import (
     zone_bounds,
 )
 from fuddy_duddy.subsystems import Subsystem
-from helpers import circles, enter, exited, make_app, run_frames, texts
+from helpers import circles, enter, exited, make_app, make_world, run_frames, spawn, texts
+
+CLONE_THREAD = 0x00010000
+
+
+def _pid_labels(commands: list[object]) -> int:
+    return len([t for t in texts(commands) if t.text.startswith("pid ")])  # type: ignore[arg-type]
+
+
+def test_all_processes_are_drawn_as_boxes():  # R12
+    script = [(0, enter("fork")), (10, exited("fork", 1235)), (12, spawn(child=1235))]
+    assert _pid_labels(run_frames(script, 40)) >= 2
+
+
+def test_spawn_makes_the_child_box_appear():  # R13
+    before = _pid_labels(run_frames([], 5))
+    script = [(0, enter("fork")), (10, exited("fork", 1235)), (12, spawn(child=1235))]
+    after = _pid_labels(run_frames(script, 40))
+    assert after > before
+
+
+def test_child_box_sits_below_parent():  # R12 (process tree)
+    script = [(0, enter("fork")), (10, exited("fork", 1235)), (12, spawn(child=1235))]
+    labels = {t.text: t.y for t in texts(run_frames(script, 40)) if t.text.startswith("pid ")}
+    assert labels["pid 1235"] > labels["pid 1234"]  # child lower than parent
+    assert labels["pid 1234"] < BOUNDARY_Y and labels["pid 1235"] < BOUNDARY_Y
+
+
+def test_clone_thread_adds_a_marker_in_the_box():  # R14
+    def userland_markers(script: list, frames: int) -> int:  # type: ignore[type-arg]
+        return len([c for c in circles(run_frames(script, frames)) if c.y < BOUNDARY_Y])
+
+    plain = userland_markers([], 40)
+    threaded = userland_markers(
+        [(0, enter("clone", args=(CLONE_THREAD, 0, 0, 0, 0, 0))), (30, spawn(child=1235))], 60
+    )
+    assert threaded > plain
 
 
 def near_boundary(command: object) -> bool:
@@ -68,6 +104,43 @@ def test_result_waits_for_the_pulse_to_return():  # R5 temporal invariant
         pulse_in_kernel = any(c.y > BOUNDARY_Y for c in circles(commands))
         result_shown = any(t.text == "= 128" for t in texts(commands))
         assert not (pulse_in_kernel and result_shown)
+
+
+def _top_line(script: list[tuple[int, object]], frames: int) -> list[str]:
+    return [t.text for t in texts(run_frames(script, frames)) if t.y < 20]  # type: ignore[arg-type]
+
+
+def test_failed_open_names_the_error_and_path():  # R11
+    script = [(0, enter("openat", path="/lib/libfoo.so")), (40, exited("openat", -2))]
+    top = _top_line(script, 60)
+    assert any("ENOENT" in line and "/lib/libfoo.so" in line for line in top)
+
+
+def test_success_shows_return_as_fd():  # R11
+    script = [(0, enter("openat", path="README.md")), (40, exited("openat", 3))]
+    assert any("fd 3" in line for line in _top_line(script, 60))
+
+
+def test_read_success_shows_bytes():  # R11
+    script = [(0, enter("read", fd=3)), (40, exited("read", 128))]
+    assert any("128 bytes" in line for line in _top_line(script, 60))
+
+
+def test_success_clears_a_prior_error():  # R11
+    script = [
+        (0, enter("openat", path="/miss")),
+        (20, exited("openat", -2)),
+        (30, enter("read", fd=3)),
+        (60, exited("read", 64)),
+    ]
+    top = _top_line(script, 90)
+    assert any("64 bytes" in line for line in top)
+    assert not any("ENOENT" in line for line in top)
+
+
+def test_status_line_fades():  # R11
+    script = [(0, enter("openat", path="/lib/libfoo.so")), (40, exited("openat", -2))]
+    assert not any("ENOENT" in t.text for t in texts(run_frames(script, 200)))
 
 
 def test_failed_result_shows_then_fades():  # R6
@@ -128,3 +201,30 @@ def test_memory_syscall_lands_in_memory_zone():  # R9
 
 def test_process_syscall_lands_in_process_zone():  # R9
     assert _in_zone(_waiting_pulse_x("clone"), Subsystem.PROCESS)
+
+
+def _mem_zone_blocks(world: object) -> int:
+    from fuddy_duddy.model import World
+    from fuddy_duddy.scene import Scene
+
+    assert isinstance(world, World)
+    commands = Scene().render(world)
+    x0, w = zone_bounds(Subsystem.MEMORY)
+    return sum(
+        1
+        for c in commands
+        if isinstance(c, Rect) and c.y > BOUNDARY_Y and x0 <= c.x < x0 + w
+    )
+
+
+def test_mmap_grows_and_munmap_shrinks_the_mem_zone():  # R10
+    world = make_world()
+    before = _mem_zone_blocks(world)
+    world.apply(enter("mmap", args=(0, 4096, 3, 34, 0, 0)))
+    world.apply(exited("mmap", 0x1000))
+    mapped = _mem_zone_blocks(world)
+    world.apply(enter("munmap", args=(0x1000, 4096, 0, 0, 0, 0)))
+    world.apply(exited("munmap", 0))
+    unmapped = _mem_zone_blocks(world)
+    assert mapped > before
+    assert unmapped < mapped

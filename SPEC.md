@@ -23,9 +23,23 @@ EventSource ──SyscallEvent──▶ World ──state──▶ Scene ──C
 
 ## Model semantics (tests/test_model.py)
 
-- **S0** If `process.pid` is 0 (unknown), an applied event adopts its `pid`. The
-  live collector starts the world before the child's pid is known; the first
-  observed event fills it in.
+The world holds many processes: `World.processes` is a dict keyed by pid, and
+`World.process` is the initial one (back-compat for a single-process world). A
+`SyscallEvent` applies to `processes[event.pid]`; per-pid pending-ENTER state
+keys the pairing. `Process` also has `threads: set[int]` (S9).
+
+- **S0** If the initial process's pid is 0 (unknown), the first applied event
+  adopts its `pid` (rekeying it in `processes`). The live collector starts the
+  world before the child's pid is known; the first observed event fills it in.
+- **S9** A `SpawnEvent(parent, child)` is applied against the parent's pending
+  ENTER: if that ENTER is a `clone` whose `args[0]` has `CLONE_THREAD`
+  (`0x00010000`) set, `child` is added to the parent process's `threads` (a
+  shared box). Otherwise (fork/vfork/plain clone) a new `Process` is created for
+  `child`, inheriting the parent's `name` and a copy of its `fds`, with its
+  `ppid` set to the parent's pid, and added to `processes`.
+- **S10** A successful `execve` (EXIT result >= 0) sets that pid's process
+  `name` to the basename of the ENTER's `path` (the program it became). If no
+  path was decoded, the name is left unchanged.
 - **S1** ENTER sets `process.in_syscall` to the syscall name.
 - **S2** EXIT clears `in_syscall` and records `result` in `process.last_result`.
 - **S3** A successful `openat` (EXIT result >= 0) creates `fds[result]` whose
@@ -41,6 +55,11 @@ EventSource ──SyscallEvent──▶ World ──state──▶ Scene ──C
 - **S5** A successful `close` removes `fds[event.fd]`.
 - **S6** Unknown syscalls perform S1/S2 bookkeeping only. They must not raise
   and must not change fds or other state.
+- **S7** A successful `mmap` (EXIT result >= 0, the mapped address) creates
+  `regions[result] = MemoryRegion(start=result, length=...)`, where `length` is
+  the ENTER's `args[1]`. A failed `mmap` creates no region (S4 still applies).
+- **S8** A successful `munmap` removes the region at the ENTER's `args[0]`
+  (`regions.pop(args[0], None)`).
 
 ## Scene semantics (tests/test_scene.py)
 
@@ -84,6 +103,31 @@ kernel space below.
   syscall waits in the kernel (R4), its pulse's x is within that zone's
   `render.zone_bounds`. Unknown syscalls (OTHER) still cross the boundary (R8)
   but need not fall in a labeled zone.
+- **R10** The process's live memory regions (`world.process.regions`) are drawn
+  as small blocks (Rect commands) inside the MEM zone below the boundary. A
+  successful `mmap` adds a block; a `munmap` removes it — the MEM zone visibly
+  grows and shrinks as mappings come and go.
+- **R11** The top of the screen shows the most recent completed syscall as one
+  line: `name(arg) = value`, where `arg` is its path or fd. On success `value`
+  is the return value given meaning by the syscall — `fd N`, `N bytes`,
+  `0xADDR`, or the raw number (`results.format_result`) — drawn in `COL_OK`. On
+  failure `value` is the errno name (e.g. `ENOENT`), drawn in `COL_FAIL`. Each
+  completion replaces the previous line, so a success clears a prior error; the
+  line is transient and fades within a short frame budget.
+- **R12** Every process in `world.processes` is drawn as a box in userland,
+  each labeled with its `name` and `pid`, laid out as a process tree: a child
+  box sits below its parent (by `ppid`), so fork reads top-down as parent →
+  child. Siblings share a row. A single-process world still shows one box;
+  forks add rows below. execve changes a box's name (the model already switched
+  it, S10). All boxes stay in userland, above the boundary.
+- **R13** When the scene is notified of a `SpawnEvent`, the child's box appears
+  alongside the parent — a visible split rather than a box popping in from
+  nowhere. Once the world holds the child (it will, via S9), its box is present.
+- **R14** A process whose `threads` is non-empty shows a marker per thread
+  inside its box, so a clone-thread reads as one box gaining threads rather than
+  a second box.
+- A syscall's pulse originates from the box of the process whose event it is
+  (`event.pid`), so R3's crossing starts at the right process.
 - Transient effects (impact flashes etc.) are welcome but must die within 30
   frames so R5's "nothing left below the boundary" holds.
 
@@ -106,8 +150,9 @@ from child memory. Names, semantics and visualization stay in Python.
 
 - The tracer spawns CMD, traces it, and emits events on **stderr** (the
   child's stdin/stdout/stderr are left untouched).
-- The tracer's exit code mirrors the child's.
-- v1 traces a single process: no follow-fork, x86_64 only.
+- The tracer's exit code mirrors the initial child's.
+- The tracer follows fork/clone/vfork: it traces the initial child and every
+  descendant it spawns (x86_64 only). Events from different pids interleave.
 
 ### Event lines
 
@@ -117,6 +162,7 @@ visualization depends on ENTER arriving while the child is still blocked):
 ```text
 ENTER pid=1234 ts=123456789 nr=257 args=ffffff9c,7f...,0,0,0,0 str1=README.md
 EXIT pid=1234 ts=123456999 ret=3 err=0
+SPAWN pid=1234 ts=123457100 child=1235
 EXITED pid=1234 ts=123457999 code=0
 SIGNALED pid=1234 ts=123457999 sig=9
 ```
@@ -125,15 +171,21 @@ SIGNALED pid=1234 ts=123457999 sig=9
   (negative errno when `err=1`). `args` are six comma-separated lowercase hex
   values without `0x`. `ts` is CLOCK_MONOTONIC nanoseconds, decimal.
 - `str<k>=` attaches the decoded C string behind argument index k. The tracer
-  MUST decode the path argument of `openat` (k=1); other syscalls MAY follow.
-  Values are escaped: any byte outside `0x21..0x7e`, plus `%`, is written as
-  `%xx` (two lowercase hex digits).
+  MUST decode the path arguments of `openat` (k=1) and `execve` (k=0); other
+  syscalls MAY follow. Values are escaped: any byte outside `0x21..0x7e`, plus
+  `%`, is written as `%xx` (two lowercase hex digits).
 - Syscall numbers, not names, cross the wire. Python resolves names via the
   generated `syscalls_x86_64.py` table.
-- Ordering: events of one pid are strictly ordered; for a single-threaded
-  child, each ENTER is immediately followed by its EXIT (no other lines for
-  that pid in between). The stream starts after execve completes (the execve
-  itself is not reported) and ends with EXITED or SIGNALED.
+- `SPAWN pid=P ts=... child=C` is emitted when process `P` creates a child `C`
+  via fork/clone/vfork, before any of `C`'s own events. It carries the parent/
+  child link the model needs; the spawning syscall's own ENTER/EXIT are still
+  reported for `P` as usual.
+- Ordering: events of a single pid are strictly ordered — each ENTER is
+  immediately followed by its EXIT for that pid (no other line for that pid in
+  between), but lines from different pids interleave freely. The initial
+  child's stream starts after its top-level execve completes (that execve is
+  not reported); a descendant's post-fork execve is reported like any syscall.
+  Each pid's stream ends with its own EXITED or SIGNALED.
 - Parsers MUST accept key=value fields in any order after the kind keyword.
 
 `src/fuddy_duddy/wire.py` is the reference parser for this protocol and is
@@ -156,13 +208,16 @@ ENTER per pid so it can name the matching EXIT.
 - **D1** `WireEnter` → one `SyscallEvent`, `Phase.ENTER`, `pid` preserved, name
   resolved through the generated syscall table (an unknown number becomes
   `"sys_<nr>"`). Argument decoding is per syscall: `openat` sets `path` from
-  `strings[1]`; fd-first syscalls (`read`, `write`, `close`, and similar) set
-  `fd` from `args[0]`.
+  `strings[1]`, `execve` sets `path` from `strings[0]`; fd-first syscalls
+  (`read`, `write`, `close`, and similar) set `fd` from `args[0]`. The raw
+  `args` tuple is always carried through.
 - **D2** `WireExit` → one `SyscallEvent`, `Phase.EXIT`, `pid` preserved, `name`
   taken from that pid's pending ENTER (fall back to `"?"` if none), `result` =
   `ret` (negative on failure).
-- **D3** `WireExited` / `WireSignaled` → no `SyscallEvent` (empty list).
-- The public method is `Decoder.push(event: WireEvent) -> list[SyscallEvent]`.
+- **D3** `WireExited` / `WireSignaled` → no event (empty list).
+- **D4** `WireSpawn` → one `SpawnEvent(parent=pid, child=child)`.
+- The public method is `Decoder.push(event: WireEvent) -> list[Event]`, where
+  `Event` is `SyscallEvent | SpawnEvent`.
 
 ### Director (`director.py`, tests/test_director.py)
 
