@@ -93,6 +93,11 @@ kernel space below.
   as small blocks (Rect commands) inside the MEM zone below the boundary. A
   successful `mmap` adds a block; a `munmap` removes it — the MEM zone visibly
   grows and shrinks as mappings come and go.
+- **R11** When a syscall fails, its errno name (`errno_names.errno_name`) and,
+  when the syscall had a path, that path are shown as one line near the top of
+  the screen (y well above the process box). This turns the anonymous `= -2`
+  into readable context — e.g. `ENOENT /usr/lib/...` as the loader probes for
+  libraries. Transient like R6: it fades within a short frame budget.
 - Transient effects (impact flashes etc.) are welcome but must die within 30
   frames so R5's "nothing left below the boundary" holds.
 

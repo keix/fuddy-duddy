@@ -70,6 +70,20 @@ def test_result_waits_for_the_pulse_to_return():  # R5 temporal invariant
         assert not (pulse_in_kernel and result_shown)
 
 
+def test_failed_open_names_the_error_and_path():  # R11
+    script = [(0, enter("openat", path="/lib/libfoo.so")), (40, exited("openat", -2))]
+    labels = texts(run_frames(script, 60))
+    top = [t for t in labels if t.y < 20]  # the error line sits near the top
+    assert any("ENOENT" in t.text for t in top)
+    assert any("/lib/libfoo.so" in t.text for t in top)
+
+
+def test_error_line_fades():  # R11
+    script = [(0, enter("openat", path="/lib/libfoo.so")), (40, exited("openat", -2))]
+    labels = texts(run_frames(script, 200))
+    assert not any("ENOENT" in t.text for t in labels)
+
+
 def test_failed_result_shows_then_fades():  # R6
     script = [(0, enter("openat", path="missing.txt")), (40, exited("openat", -2))]
     # Shortly after the pulse returns, the failure is visible and red.

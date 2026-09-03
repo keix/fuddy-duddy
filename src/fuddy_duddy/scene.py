@@ -22,6 +22,7 @@ by success or failure. All transient effects die well within 30 frames.
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
+from .errno_names import errno_name
 from .event import Phase, SyscallEvent
 from .model import World
 from .render import (
@@ -72,6 +73,7 @@ _DESCEND_FRAMES = 18
 _RETURN_FRAMES = 14
 _RING_TTL = 10  # impact rings; far below the 30-frame cap
 _FAIL_RESULT_TTL = 30  # frames a failure result lingers before fading (R6)
+_ERROR_TTL = 90  # frames the top-of-screen error line lingers (R11)
 
 _BOB = (0, -1, -1, 0, 1, 1)  # idle wobble for a waiting pulse
 _DASH = 8  # boundary dash length
@@ -89,6 +91,7 @@ class _Pulse:
 
     name: str
     target_x: int = _PULSE_X  # zone center this syscall lands over (R9)
+    path: str | None = None  # the syscall's path argument, if any (R11)
     state: _PulseState = _PulseState.DESCEND
     t: int = 0  # frames spent in the current state
     x: float = float(_PULSE_X)
@@ -115,11 +118,17 @@ class Scene:
     _pulse: _Pulse | None = None
     _rings: list[_Ring] = field(default_factory=list)
     _result_shown_since: int | None = None  # frame the current result landed
+    _error_msg: str | None = None  # latest failure's errno + path (R11)
+    _error_since: int = 0
 
     def notify(self, event: SyscallEvent) -> None:
         """React to an event the world just applied."""
         if event.phase is Phase.ENTER:
-            self._pulse = _Pulse(name=event.name, target_x=zone_center(classify(event.name)))
+            self._pulse = _Pulse(
+                name=event.name,
+                target_x=zone_center(classify(event.name)),
+                path=event.path,
+            )
             return
         pulse = self._pulse
         if pulse is None:
@@ -130,6 +139,11 @@ class Scene:
         pulse.return_from = pulse.y
         pulse.result = result
         self._rings.append(_Ring(int(pulse.x), int(pulse.y), self._result_color(result)))
+        if result < 0:
+            # R11: name why it failed, with the path it was reaching for.
+            detail = pulse.path or pulse.name
+            self._error_msg = f"{errno_name(result)} {detail}"
+            self._error_since = self._frame
 
     def step(self) -> None:
         """Advance animations by one frame."""
@@ -178,7 +192,14 @@ class Scene:
         self._draw_pulse(commands)
         self._draw_fd_bar(commands, world)
         self._draw_rings(commands)
+        self._draw_error(commands)
         return commands
+
+    def _draw_error(self, commands: list[Command]) -> None:
+        # R11: the latest failure's errno + path, near the top, fading (R6-like).
+        if self._error_msg is None or self._frame - self._error_since > _ERROR_TTL:
+            return
+        commands.append(Text(4, 2, self._error_msg[:62], COL_FAIL))
 
     # -- layers ------------------------------------------------------------
 
