@@ -15,7 +15,36 @@ from fuddy_duddy.render import (
     zone_bounds,
 )
 from fuddy_duddy.subsystems import Subsystem
-from helpers import circles, enter, exited, make_app, make_world, run_frames, texts
+from helpers import circles, enter, exited, make_app, make_world, run_frames, spawn, texts
+
+CLONE_THREAD = 0x00010000
+
+
+def _pid_labels(commands: list[object]) -> int:
+    return len([t for t in texts(commands) if t.text.startswith("pid ")])  # type: ignore[arg-type]
+
+
+def test_all_processes_are_drawn_as_boxes():  # R12
+    script = [(0, enter("fork")), (10, exited("fork", 1235)), (12, spawn(child=1235))]
+    assert _pid_labels(run_frames(script, 40)) >= 2
+
+
+def test_spawn_makes_the_child_box_appear():  # R13
+    before = _pid_labels(run_frames([], 5))
+    script = [(0, enter("fork")), (10, exited("fork", 1235)), (12, spawn(child=1235))]
+    after = _pid_labels(run_frames(script, 40))
+    assert after > before
+
+
+def test_clone_thread_adds_a_marker_in_the_box():  # R14
+    def userland_markers(script: list, frames: int) -> int:  # type: ignore[type-arg]
+        return len([c for c in circles(run_frames(script, frames)) if c.y < BOUNDARY_Y])
+
+    plain = userland_markers([], 40)
+    threaded = userland_markers(
+        [(0, enter("clone", args=(CLONE_THREAD, 0, 0, 0, 0, 0))), (30, spawn(child=1235))], 60
+    )
+    assert threaded > plain
 
 
 def near_boundary(command: object) -> bool:

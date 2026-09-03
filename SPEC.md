@@ -114,6 +114,18 @@ kernel space below.
   failure `value` is the errno name (e.g. `ENOENT`), drawn in `COL_FAIL`. Each
   completion replaces the previous line, so a success clears a prior error; the
   line is transient and fades within a short frame budget.
+- **R12** Every process in `world.processes` is drawn as a box in userland,
+  each labeled with its `name` and `pid`. A single-process world still shows one
+  box; forks add more. execve changes a box's name (the model already switched
+  it, S10).
+- **R13** When the scene is notified of a `SpawnEvent`, the child's box appears
+  alongside the parent — a visible split rather than a box popping in from
+  nowhere. Once the world holds the child (it will, via S9), its box is present.
+- **R14** A process whose `threads` is non-empty shows a marker per thread
+  inside its box, so a clone-thread reads as one box gaining threads rather than
+  a second box.
+- A syscall's pulse originates from the box of the process whose event it is
+  (`event.pid`), so R3's crossing starts at the right process.
 - Transient effects (impact flashes etc.) are welcome but must die within 30
   frames so R5's "nothing left below the boundary" holds.
 

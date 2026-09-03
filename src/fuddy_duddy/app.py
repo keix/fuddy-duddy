@@ -1,4 +1,3 @@
-from .event import SyscallEvent
 from .model import World
 from .render import Command
 from .scene import Scene
@@ -16,11 +15,7 @@ class App:
 
     def step(self) -> None:
         for event in self.source.poll(self.frame):
-            applied = self.world.apply(event)
-            # The scene animates syscalls; SpawnEvent updates only the world
-            # (Phase 2). Phase 3 will let the scene react to spawns too.
-            if isinstance(applied, SyscallEvent):
-                self.scene.notify(applied)
+            self.scene.notify(self.world.apply(event))
         self.scene.step()
         self.frame += 1
 

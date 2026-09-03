@@ -22,8 +22,8 @@ by success or failure. All transient effects die well within 30 frames.
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from .event import Phase, SyscallEvent
-from .model import World
+from .event import Event, Phase, SpawnEvent
+from .model import Process, World
 from .render import (
     BOUNDARY_Y,
     COL_FAIL,
@@ -63,6 +63,13 @@ _PROC_W = 80
 _PROC_H = 34
 _PULSE_X = _PROC_X + _PROC_W // 2
 _ORIGIN_Y = _PROC_Y + _PROC_H  # where pulses are born and land back
+
+# Multi-box tiling (R12): process boxes tile left-to-right by pid in a row
+# across userland, between the R11 status line (y~2) and the boundary.
+_ROW_X = 6  # left margin of the box row
+_ROW_W = WIDTH - 2 * _ROW_X  # available width for tiled boxes
+_BOX_GAP = 6  # horizontal gap between tiled boxes
+_MAX_BOX_W = _PROC_W  # a lone box keeps the original single-box width
 _REST_Y = 178  # where a blocked pulse waits in kernel space
 _FD_SEP_Y = FD_BAR_Y - 8
 
@@ -74,6 +81,7 @@ _RETURN_FRAMES = 14
 _RING_TTL = 10  # impact rings; far below the 30-frame cap
 _FAIL_RESULT_TTL = 30  # frames a failure result lingers before fading (R6)
 _STATUS_TTL = 90  # frames the top-of-screen status line lingers (R11)
+_SPLIT_TTL = 24  # frames a spawn split flourish lives (R13); settles < 30
 
 _BOB = (0, -1, -1, 0, 1, 1)  # idle wobble for a waiting pulse
 _DASH = 8  # boundary dash length
@@ -91,6 +99,7 @@ class _Pulse:
 
     name: str
     target_x: int = _PULSE_X  # zone center this syscall lands over (R9)
+    origin_x: int = _PULSE_X  # x of the owning process's box center (SPEC)
     path: str | None = None  # the syscall's path argument, if any (R11)
     fd: int | None = None  # the syscall's fd argument, if any (R11)
     state: _PulseState = _PulseState.DESCEND
@@ -112,25 +121,50 @@ class _Ring:
 
 
 @dataclass
+class _Split:
+    """A spawn flourish (R13): the child's box visibly peels off the parent.
+
+    Purely transient — the boxes themselves come from world state (R12); this
+    is the short separation motion. Settles well within the 30-frame budget.
+    """
+
+    parent: int
+    child: int
+    age: int = 0
+
+
+@dataclass
 class Scene:
     """Owns transient visual state (pulses, effects) across frames."""
 
     _frame: int = 0
     _pulse: _Pulse | None = None
     _rings: list[_Ring] = field(default_factory=list)
+    _splits: list[_Split] = field(default_factory=list)
+    # pids known at render time, in stable sorted order, so a pid maps to the
+    # same box slot for both drawing (R12) and pulse origins (SPEC).
+    _pids: tuple[int, ...] = ()
     _result_shown_since: int | None = None  # frame the current result landed
     _status_msg: str | None = None  # latest completed syscall, one line (R11)
     _status_color: int = COL_OK
     _status_since: int = 0
 
-    def notify(self, event: SyscallEvent) -> None:
+    def notify(self, event: Event) -> None:
         """React to an event the world just applied."""
+        if isinstance(event, SpawnEvent):
+            # R13: kick off the split flourish. The child's box comes from world
+            # state (R12); this animation is the transient separation motion.
+            self._splits.append(_Split(parent=event.parent, child=event.child))
+            return
         if event.phase is Phase.ENTER:
+            origin_x = self._origin_x_for(event.pid)
             self._pulse = _Pulse(
                 name=event.name,
                 target_x=zone_center(classify(event.name)),
+                origin_x=origin_x,
                 path=event.path,
                 fd=event.fd,
+                x=float(origin_x),
             )
             return
         pulse = self._pulse
@@ -160,6 +194,9 @@ class Scene:
         for ring in self._rings:
             ring.age += 1
         self._rings = [r for r in self._rings if r.age < _RING_TTL]
+        for split in self._splits:
+            split.age += 1
+        self._splits = [s for s in self._splits if s.age < _SPLIT_TTL]
 
         pulse = self._pulse
         if pulse is None:
@@ -170,9 +207,10 @@ class Scene:
             progress = min(1.0, pulse.t / _DESCEND_FRAMES)
             eased = _ease(progress)
             pulse.y = _lerp(float(_ORIGIN_Y), float(_REST_Y), eased)
-            # Diagonal descent from the process box toward the syscall's zone
-            # center, so the waiting pulse's x lands within its zone (R9).
-            pulse.x = _lerp(float(_PULSE_X), float(pulse.target_x), eased)
+            # Diagonal descent from the owning process's box toward the syscall's
+            # zone center, so the crossing starts at the right box (SPEC) and the
+            # waiting pulse's x lands within its zone (R9).
+            pulse.x = _lerp(float(pulse.origin_x), float(pulse.target_x), eased)
             if before <= BOUNDARY_Y < pulse.y:
                 self._rings.append(_Ring(int(pulse.x), BOUNDARY_Y, _COL_PULSE))
             if progress >= 1.0:
@@ -183,10 +221,10 @@ class Scene:
             progress = min(1.0, pulse.t / _RETURN_FRAMES)
             eased = _ease(progress)
             pulse.y = _lerp(pulse.return_from, float(_ORIGIN_Y), eased)
-            pulse.x = _lerp(float(pulse.target_x), float(_PULSE_X), eased)
+            pulse.x = _lerp(float(pulse.target_x), float(pulse.origin_x), eased)
             if progress >= 1.0:
                 self._rings.append(
-                    _Ring(_PULSE_X, _ORIGIN_Y, self._result_color(pulse.result or 0))
+                    _Ring(pulse.origin_x, _ORIGIN_Y, self._result_color(pulse.result or 0))
                 )
                 self._pulse = None
                 self._result_shown_since = self._frame
@@ -260,13 +298,80 @@ class Scene:
             commands.append(Rect(bx, by, block, block, _COL_MEM))
 
     def _draw_process(self, commands: list[Command], world: World) -> None:
-        process = world.process
-        commands.append(Rect(_PROC_X, _PROC_Y, _PROC_W, _PROC_H, _COL_BOX_BG))
-        commands.append(Rect(_PROC_X, _PROC_Y, _PROC_W, _PROC_H, _COL_BOX_EDGE, filled=False))
-        commands.append(Text(_PROC_X + 5, _PROC_Y + 5, process.name, _COL_TEXT))
-        commands.append(Text(_PROC_X + 5, _PROC_Y + 13, f"pid {process.pid}", _COL_DIM))
-        if process.in_syscall is not None:
-            commands.append(Text(_PROC_X + 5, _PROC_Y + 23, f"{process.in_syscall}()", _COL_PULSE))
+        # R12: draw every process in world.processes as a box in userland,
+        # tiled left-to-right by pid, each labeled with its name and pid.
+        pids = self._box_pids(world)
+        self._pids = pids
+        for pid in pids:
+            process = world.processes[pid]
+            x, y, w, h = self._box_rect(pid)
+            x += self._split_offset(pid)  # R13: transient separation nudge
+            commands.append(Rect(x, y, w, h, _COL_BOX_BG))
+            commands.append(Rect(x, y, w, h, _COL_BOX_EDGE, filled=False))
+            commands.append(Text(x + 5, y + 5, process.name, _COL_TEXT))
+            commands.append(Text(x + 5, y + 13, f"pid {process.pid}", _COL_DIM))
+            if process.in_syscall is not None:
+                commands.append(Text(x + 5, y + 23, f"{process.in_syscall}()", _COL_PULSE))
+            self._draw_threads(commands, process, x, y, w, h)
+
+    def _draw_threads(
+        self, commands: list[Command], process: Process, x: int, y: int, w: int, h: int
+    ) -> None:
+        # R14: one small marker (Circle) per thread, inside the box in userland
+        # (y < BOUNDARY_Y), so a clone-thread reads as one box gaining threads.
+        if not process.threads:
+            return
+        marker_y = min(y + h - 5, BOUNDARY_Y - 3)
+        step = 6
+        cx = x + 6
+        for _ in sorted(process.threads):
+            if cx > x + w - 4:
+                break
+            commands.append(Circle(cx, marker_y, 2, _COL_PULSE))
+            cx += step
+
+    # -- box layout (R12) --------------------------------------------------
+
+    @staticmethod
+    def _box_pids(world: World) -> tuple[int, ...]:
+        return tuple(sorted(world.processes))
+
+    def _box_rect(self, pid: int) -> tuple[int, int, int, int]:
+        """(x, y, w, h) of pid's box, tiled left-to-right in sorted order."""
+        pids = self._pids
+        n = len(pids)
+        try:
+            i = pids.index(pid)
+        except ValueError:
+            i = 0
+            n = max(1, n)
+        if n <= 1:
+            # A lone process keeps the original single-box placement, so the
+            # single-process scene is pixel-stable.
+            return _PROC_X, _PROC_Y, _PROC_W, _PROC_H
+        slot = (_ROW_W - (n - 1) * _BOX_GAP) // n
+        w = max(24, min(_MAX_BOX_W, slot))
+        x = _ROW_X + i * (slot + _BOX_GAP)
+        return x, _PROC_Y, w, _PROC_H
+
+    def _origin_x_for(self, pid: int) -> int:
+        """Map a pid to the center x of its box (SPEC: pulse origin)."""
+        x, _, w, _ = self._box_rect(pid)
+        return x + w // 2
+
+    def _split_offset(self, pid: int) -> int:
+        """Transient horizontal nudge for a box mid-split (R13)."""
+        offset = 0
+        for split in self._splits:
+            frac = 1.0 - split.age / _SPLIT_TTL  # 1 -> 0 as it settles
+            if frac <= 0.0:
+                continue
+            amp = round(6 * frac)
+            if pid == split.child:
+                offset += amp  # child peels to the right
+            elif pid == split.parent:
+                offset -= amp  # parent recoils left
+        return offset
 
     def _draw_result(self, commands: list[Command], world: World) -> None:
         # R5/R6: last result as "= {result}" in userland, colored by sign.
@@ -285,7 +390,8 @@ class Scene:
         if result < 0 and faded:
             return
         color = self._result_color(result)
-        commands.append(Text(_PROC_X + _PROC_W + 6, _PROC_Y + 13, f"= {result}", color))
+        bx, by, bw, _ = self._box_rect(world.process.pid)
+        commands.append(Text(bx + bw + 6, by + 13, f"= {result}", color))
 
     def _draw_pulse(self, commands: list[Command]) -> None:
         pulse = self._pulse
@@ -300,8 +406,8 @@ class Scene:
         else:
             color = _COL_PULSE
 
-        # Thread back to the process box, then a short motion trail.
-        commands.append(Line(_PULSE_X, _ORIGIN_Y, x, y, _COL_DIM))
+        # Thread back to the owning process's box, then a short motion trail.
+        commands.append(Line(pulse.origin_x, _ORIGIN_Y, x, y, _COL_DIM))
         direction = -1 if pulse.state is _PulseState.RETURN else 1
         if pulse.state is not _PulseState.WAIT:
             for k in (1, 2):
