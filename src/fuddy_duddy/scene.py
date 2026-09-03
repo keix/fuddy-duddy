@@ -191,8 +191,9 @@ class Scene:
             x2 = min(WIDTH - 1, x + _DASH - 1)
             if x1 <= x2:
                 commands.append(Line(x1, BOUNDARY_Y, x2, BOUNDARY_Y, _COL_BOUNDARY))
-        commands.append(Text(5, BOUNDARY_Y - 11, "USERLAND", _COL_LABEL))
-        commands.append(Text(5, BOUNDARY_Y + 6, "KERNEL SPACE", _COL_LABEL))
+        # Centered headings, so each names its whole half rather than a corner.
+        _centered(commands, "USERLAND", BOUNDARY_Y - 11)
+        _centered(commands, "KERNEL SPACE", BOUNDARY_Y + 4)
         self._draw_zones(commands)
 
     def _draw_zones(self, commands: list[Command]) -> None:
@@ -201,8 +202,10 @@ class Scene:
         active_x = int(self._pulse.target_x) if self._pulse is not None else None
         for sub in ZONE_ORDER:
             x0, w = zone_bounds(sub)
+            # A short tick by the label, not a full divider: kernel space reads
+            # as one region that the zones subdivide, not four separate columns.
             if x0 > 0:
-                commands.append(Line(x0, BOUNDARY_Y + 1, x0, FD_BAR_Y - 1, _COL_DIM))
+                commands.append(Line(x0, BOUNDARY_Y + 14, x0, BOUNDARY_Y + 22, _COL_DIM))
             hot = active_x is not None and x0 <= active_x < x0 + w
             color = _COL_NAME if hot else _COL_DIM
             commands.append(Text(x0 + 4, BOUNDARY_Y + 16, ZONE_LABELS[sub], color))
@@ -305,6 +308,13 @@ class Scene:
     @staticmethod
     def _result_color(result: int) -> int:
         return COL_OK if result >= 0 else COL_FAIL
+
+
+_CHAR_W = 4  # Pyxel's built-in font is 4px per character.
+
+
+def _centered(commands: list[Command], text: str, y: int) -> None:
+    commands.append(Text((WIDTH - len(text) * _CHAR_W) // 2, y, text, _COL_LABEL))
 
 
 def _lerp(a: float, b: float, t: float) -> float:
