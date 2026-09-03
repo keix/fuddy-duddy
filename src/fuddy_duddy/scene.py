@@ -31,12 +31,17 @@ from .render import (
     FD_BAR_Y,
     HEIGHT,
     WIDTH,
+    ZONE_LABELS,
+    ZONE_ORDER,
     Circle,
     Command,
     Line,
     Rect,
     Text,
+    zone_bounds,
+    zone_center,
 )
+from .subsystems import classify
 
 # Extra palette indices (Pyxel default palette).
 _COL_KERNEL_BG = 1  # navy backdrop for kernel space
@@ -82,8 +87,10 @@ class _Pulse:
     """One in-flight syscall, from ENTER to landing back in userland."""
 
     name: str
+    target_x: int = _PULSE_X  # zone center this syscall lands over (R9)
     state: _PulseState = _PulseState.DESCEND
     t: int = 0  # frames spent in the current state
+    x: float = float(_PULSE_X)
     y: float = float(_ORIGIN_Y)
     return_from: float = float(_REST_Y)
     result: int | None = None
@@ -111,7 +118,7 @@ class Scene:
     def notify(self, event: SyscallEvent) -> None:
         """React to an event the world just applied."""
         if event.phase is Phase.ENTER:
-            self._pulse = _Pulse(name=event.name)
+            self._pulse = _Pulse(name=event.name, target_x=zone_center(classify(event.name)))
             return
         pulse = self._pulse
         if pulse is None:
@@ -121,7 +128,7 @@ class Scene:
         pulse.t = 0
         pulse.return_from = pulse.y
         pulse.result = result
-        self._rings.append(_Ring(_PULSE_X, int(pulse.y), self._result_color(result)))
+        self._rings.append(_Ring(int(pulse.x), int(pulse.y), self._result_color(result)))
 
     def step(self) -> None:
         """Advance animations by one frame."""
@@ -137,15 +144,22 @@ class Scene:
         if pulse.state is _PulseState.DESCEND:
             before = pulse.y
             progress = min(1.0, pulse.t / _DESCEND_FRAMES)
-            pulse.y = _lerp(float(_ORIGIN_Y), float(_REST_Y), _ease(progress))
+            eased = _ease(progress)
+            pulse.y = _lerp(float(_ORIGIN_Y), float(_REST_Y), eased)
+            # Diagonal descent from the process box toward the syscall's zone
+            # center, so the waiting pulse's x lands within its zone (R9).
+            pulse.x = _lerp(float(_PULSE_X), float(pulse.target_x), eased)
             if before <= BOUNDARY_Y < pulse.y:
-                self._rings.append(_Ring(_PULSE_X, BOUNDARY_Y, _COL_PULSE))
+                self._rings.append(_Ring(int(pulse.x), BOUNDARY_Y, _COL_PULSE))
             if progress >= 1.0:
+                pulse.x = float(pulse.target_x)
                 pulse.state = _PulseState.WAIT
                 pulse.t = 0
         elif pulse.state is _PulseState.RETURN:
             progress = min(1.0, pulse.t / _RETURN_FRAMES)
-            pulse.y = _lerp(pulse.return_from, float(_ORIGIN_Y), _ease(progress))
+            eased = _ease(progress)
+            pulse.y = _lerp(pulse.return_from, float(_ORIGIN_Y), eased)
+            pulse.x = _lerp(float(pulse.target_x), float(_PULSE_X), eased)
             if progress >= 1.0:
                 self._rings.append(
                     _Ring(_PULSE_X, _ORIGIN_Y, self._result_color(pulse.result or 0))
@@ -177,6 +191,19 @@ class Scene:
                 commands.append(Line(x1, BOUNDARY_Y, x2, BOUNDARY_Y, _COL_BOUNDARY))
         commands.append(Text(5, BOUNDARY_Y - 11, "USERLAND", _COL_LABEL))
         commands.append(Text(5, BOUNDARY_Y + 6, "KERNEL SPACE", _COL_LABEL))
+        self._draw_zones(commands)
+
+    def _draw_zones(self, commands: list[Command]) -> None:
+        # R9: four subsystem columns below the boundary, each labeled. The
+        # active zone (where a pulse is landing) is highlighted brighter.
+        active_x = int(self._pulse.target_x) if self._pulse is not None else None
+        for sub in ZONE_ORDER:
+            x0, w = zone_bounds(sub)
+            if x0 > 0:
+                commands.append(Line(x0, BOUNDARY_Y + 1, x0, FD_BAR_Y - 1, _COL_DIM))
+            hot = active_x is not None and x0 <= active_x < x0 + w
+            color = _COL_NAME if hot else _COL_DIM
+            commands.append(Text(x0 + 4, BOUNDARY_Y + 16, ZONE_LABELS[sub], color))
 
     def _draw_process(self, commands: list[Command], world: World) -> None:
         process = world.process
@@ -210,6 +237,7 @@ class Scene:
         pulse = self._pulse
         if pulse is None:
             return
+        x = int(pulse.x)
         y = int(pulse.y)
         if pulse.state is _PulseState.WAIT:
             y += _BOB[(self._frame // 4) % len(_BOB)]
@@ -219,22 +247,22 @@ class Scene:
             color = _COL_PULSE
 
         # Thread back to the process box, then a short motion trail.
-        commands.append(Line(_PULSE_X, _ORIGIN_Y, _PULSE_X, y, _COL_DIM))
+        commands.append(Line(_PULSE_X, _ORIGIN_Y, x, y, _COL_DIM))
         direction = -1 if pulse.state is _PulseState.RETURN else 1
         if pulse.state is not _PulseState.WAIT:
             for k in (1, 2):
                 trail_y = y - direction * k * 5
                 if _ORIGIN_Y <= trail_y <= _REST_Y:
-                    commands.append(Circle(_PULSE_X, trail_y, max(1, 3 - k), _COL_DIM))
+                    commands.append(Circle(x, trail_y, max(1, 3 - k), _COL_DIM))
         # R6: a failing return is drawn smaller, so it reads as minor.
         radius = 2 if pulse.state is _PulseState.RETURN and (pulse.result or 0) < 0 else 3
-        commands.append(Circle(_PULSE_X, y, radius, color))
+        commands.append(Circle(x, y, radius, color))
 
         # R4: a blocked syscall is named where it waits, below the boundary.
-        commands.append(Text(_PULSE_X + 8, y - 2, pulse.name, _COL_NAME))
+        commands.append(Text(x + 8, y - 2, pulse.name, _COL_NAME))
         if pulse.state is _PulseState.WAIT:
             ripple = 5 + (pulse.t // 3) % 6
-            commands.append(Circle(_PULSE_X, y, ripple, _COL_DIM, filled=False))
+            commands.append(Circle(x, y, ripple, _COL_DIM, filled=False))
 
     def _draw_fd_bar(self, commands: list[Command], world: World) -> None:
         # R7: open fds listed at or below FD_BAR_Y; closed fds vanish.

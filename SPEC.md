@@ -76,6 +76,14 @@ kernel space below.
   may draw Text there.
 - **R8** Unknown syscalls still cross the boundary (R3 applies). Coverage
   degrades gracefully: unknown names lose semantics, never the crossing.
+- **R9** Kernel space is split into subsystem zones — FILE, MEMORY, PROCESS,
+  NET — each labeled below the boundary (labels from `render.ZONE_LABELS`). A
+  syscall's pulse lands in the zone its name classifies to
+  (`subsystems.classify`): openat/read/write → FILE, mmap/brk → MEMORY,
+  clone/execve → PROCESS, socket/connect → NET. "Lands in" means that while the
+  syscall waits in the kernel (R4), its pulse's x is within that zone's
+  `render.zone_bounds`. Unknown syscalls (OTHER) still cross the boundary (R8)
+  but need not fall in a labeled zone.
 - Transient effects (impact flashes etc.) are welcome but must die within 30
   frames so R5's "nothing left below the boundary" holds.
 

@@ -1,10 +1,20 @@
-"""Semantic contract for the scene (SPEC.md R1-R8).
+"""Semantic contract for the scene (SPEC.md R1-R9).
 
 These tests are topological on purpose: they constrain which side of the
 boundary things appear on and when, never exact coordinates or shapes.
 """
 
-from fuddy_duddy.render import BOUNDARY_Y, COL_FAIL, COL_OK, FD_BAR_Y, Line, Rect
+from fuddy_duddy.render import (
+    BOUNDARY_Y,
+    COL_FAIL,
+    COL_OK,
+    FD_BAR_Y,
+    ZONE_LABELS,
+    Line,
+    Rect,
+    zone_bounds,
+)
+from fuddy_duddy.subsystems import Subsystem
 from helpers import circles, enter, exited, make_app, run_frames, texts
 
 
@@ -90,3 +100,31 @@ def test_closed_fd_leaves_fd_bar():  # R7
 def test_unknown_syscall_still_crosses_boundary():  # R8
     commands = run_frames([(0, enter("ioctl", fd=0))], 30)
     assert any(c.y > BOUNDARY_Y for c in circles(commands))
+
+
+def test_subsystem_zones_are_labeled():  # R9
+    labels = {t.text for t in texts(run_frames([], 1))}
+    assert set(ZONE_LABELS.values()) <= labels
+
+
+def _waiting_pulse_x(name: str, **kwargs: object) -> list[int]:
+    # After ~18 frames of descent the pulse is waiting in the kernel (R4).
+    commands = run_frames([(0, enter(name, **kwargs))], 30)  # type: ignore[arg-type]
+    return [c.x for c in circles(commands) if c.y > BOUNDARY_Y]
+
+
+def _in_zone(xs: list[int], sub: Subsystem) -> bool:
+    x0, w = zone_bounds(sub)
+    return any(x0 <= x < x0 + w for x in xs)
+
+
+def test_file_syscall_lands_in_file_zone():  # R9
+    assert _in_zone(_waiting_pulse_x("openat", path="README.md"), Subsystem.FILE)
+
+
+def test_memory_syscall_lands_in_memory_zone():  # R9
+    assert _in_zone(_waiting_pulse_x("mmap"), Subsystem.MEMORY)
+
+
+def test_process_syscall_lands_in_process_zone():  # R9
+    assert _in_zone(_waiting_pulse_x("clone"), Subsystem.PROCESS)
