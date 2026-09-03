@@ -10,7 +10,7 @@ from .subsystems import Subsystem
 
 WIDTH = 256
 HEIGHT = 256
-FPS = 30
+FPS = 60  # frame-based pacing is unchanged; a higher fps just plays it faster
 
 BOUNDARY_Y = 128  # the user/kernel boundary
 FD_BAR_Y = 232    # open file descriptors are listed at or below this line
