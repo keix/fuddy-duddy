@@ -93,11 +93,13 @@ kernel space below.
   as small blocks (Rect commands) inside the MEM zone below the boundary. A
   successful `mmap` adds a block; a `munmap` removes it — the MEM zone visibly
   grows and shrinks as mappings come and go.
-- **R11** When a syscall fails, its errno name (`errno_names.errno_name`) and,
-  when the syscall had a path, that path are shown as one line near the top of
-  the screen (y well above the process box). This turns the anonymous `= -2`
-  into readable context — e.g. `ENOENT /usr/lib/...` as the loader probes for
-  libraries. Transient like R6: it fades within a short frame budget.
+- **R11** The top of the screen shows the most recent completed syscall as one
+  line: `name(arg) = value`, where `arg` is its path or fd. On success `value`
+  is the return value given meaning by the syscall — `fd N`, `N bytes`,
+  `0xADDR`, or the raw number (`results.format_result`) — drawn in `COL_OK`. On
+  failure `value` is the errno name (e.g. `ENOENT`), drawn in `COL_FAIL`. Each
+  completion replaces the previous line, so a success clears a prior error; the
+  line is transient and fades within a short frame budget.
 - Transient effects (impact flashes etc.) are welcome but must die within 30
   frames so R5's "nothing left below the boundary" holds.
 

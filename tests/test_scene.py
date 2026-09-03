@@ -70,18 +70,41 @@ def test_result_waits_for_the_pulse_to_return():  # R5 temporal invariant
         assert not (pulse_in_kernel and result_shown)
 
 
+def _top_line(script: list[tuple[int, object]], frames: int) -> list[str]:
+    return [t.text for t in texts(run_frames(script, frames)) if t.y < 20]  # type: ignore[arg-type]
+
+
 def test_failed_open_names_the_error_and_path():  # R11
     script = [(0, enter("openat", path="/lib/libfoo.so")), (40, exited("openat", -2))]
-    labels = texts(run_frames(script, 60))
-    top = [t for t in labels if t.y < 20]  # the error line sits near the top
-    assert any("ENOENT" in t.text for t in top)
-    assert any("/lib/libfoo.so" in t.text for t in top)
+    top = _top_line(script, 60)
+    assert any("ENOENT" in line and "/lib/libfoo.so" in line for line in top)
 
 
-def test_error_line_fades():  # R11
+def test_success_shows_return_as_fd():  # R11
+    script = [(0, enter("openat", path="README.md")), (40, exited("openat", 3))]
+    assert any("fd 3" in line for line in _top_line(script, 60))
+
+
+def test_read_success_shows_bytes():  # R11
+    script = [(0, enter("read", fd=3)), (40, exited("read", 128))]
+    assert any("128 bytes" in line for line in _top_line(script, 60))
+
+
+def test_success_clears_a_prior_error():  # R11
+    script = [
+        (0, enter("openat", path="/miss")),
+        (20, exited("openat", -2)),
+        (30, enter("read", fd=3)),
+        (60, exited("read", 64)),
+    ]
+    top = _top_line(script, 90)
+    assert any("64 bytes" in line for line in top)
+    assert not any("ENOENT" in line for line in top)
+
+
+def test_status_line_fades():  # R11
     script = [(0, enter("openat", path="/lib/libfoo.so")), (40, exited("openat", -2))]
-    labels = texts(run_frames(script, 200))
-    assert not any("ENOENT" in t.text for t in labels)
+    assert not any("ENOENT" in t.text for t in texts(run_frames(script, 200)))
 
 
 def test_failed_result_shows_then_fades():  # R6
