@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from .event import Event, SyscallEvent
+from .event import Event
 
 
 class EventSource(Protocol):
@@ -17,7 +17,7 @@ class ScriptedSource:
 
     def __init__(
         self,
-        script: list[tuple[int, SyscallEvent]],
+        script: list[tuple[int, Event]],
         loop: bool = False,
         loop_pause: int = 45,
     ) -> None:
