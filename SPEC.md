@@ -122,8 +122,9 @@ from child memory. Names, semantics and visualization stay in Python.
 
 - The tracer spawns CMD, traces it, and emits events on **stderr** (the
   child's stdin/stdout/stderr are left untouched).
-- The tracer's exit code mirrors the child's.
-- v1 traces a single process: no follow-fork, x86_64 only.
+- The tracer's exit code mirrors the initial child's.
+- The tracer follows fork/clone/vfork: it traces the initial child and every
+  descendant it spawns (x86_64 only). Events from different pids interleave.
 
 ### Event lines
 
@@ -133,6 +134,7 @@ visualization depends on ENTER arriving while the child is still blocked):
 ```text
 ENTER pid=1234 ts=123456789 nr=257 args=ffffff9c,7f...,0,0,0,0 str1=README.md
 EXIT pid=1234 ts=123456999 ret=3 err=0
+SPAWN pid=1234 ts=123457100 child=1235
 EXITED pid=1234 ts=123457999 code=0
 SIGNALED pid=1234 ts=123457999 sig=9
 ```
@@ -146,10 +148,16 @@ SIGNALED pid=1234 ts=123457999 sig=9
   `%xx` (two lowercase hex digits).
 - Syscall numbers, not names, cross the wire. Python resolves names via the
   generated `syscalls_x86_64.py` table.
-- Ordering: events of one pid are strictly ordered; for a single-threaded
-  child, each ENTER is immediately followed by its EXIT (no other lines for
-  that pid in between). The stream starts after execve completes (the execve
-  itself is not reported) and ends with EXITED or SIGNALED.
+- `SPAWN pid=P ts=... child=C` is emitted when process `P` creates a child `C`
+  via fork/clone/vfork, before any of `C`'s own events. It carries the parent/
+  child link the model needs; the spawning syscall's own ENTER/EXIT are still
+  reported for `P` as usual.
+- Ordering: events of a single pid are strictly ordered — each ENTER is
+  immediately followed by its EXIT for that pid (no other line for that pid in
+  between), but lines from different pids interleave freely. The initial
+  child's stream starts after its top-level execve completes (that execve is
+  not reported); a descendant's post-fork execve is reported like any syscall.
+  Each pid's stream ends with its own EXITED or SIGNALED.
 - Parsers MUST accept key=value fields in any order after the kind keyword.
 
 `src/fuddy_duddy/wire.py` is the reference parser for this protocol and is

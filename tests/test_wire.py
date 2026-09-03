@@ -2,7 +2,14 @@
 
 import pytest
 
-from fuddy_duddy.wire import WireEnter, WireExit, WireExited, WireSignaled, parse_line
+from fuddy_duddy.wire import (
+    WireEnter,
+    WireExit,
+    WireExited,
+    WireSignaled,
+    WireSpawn,
+    parse_line,
+)
 
 
 def test_parses_enter():
@@ -27,6 +34,10 @@ def test_parses_exited():
 
 def test_parses_signaled():
     assert parse_line("SIGNALED pid=1 ts=5 sig=9") == WireSignaled(pid=1, ts=5, sig=9)
+
+
+def test_parses_spawn():
+    assert parse_line("SPAWN pid=1200 ts=7 child=1201") == WireSpawn(pid=1200, ts=7, child=1201)
 
 
 def test_fields_accepted_in_any_order():

@@ -1,7 +1,7 @@
 CC ?= cc
 CFLAGS ?= -Wall -Wextra -Werror -O2
 
-BINS = tracer fixtures/story fixtures/block
+BINS = tracer fixtures/story fixtures/block fixtures/fork_exec
 
 all: $(BINS)
 
@@ -12,6 +12,9 @@ fixtures/story: fixtures/story.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 fixtures/block: fixtures/block.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+fixtures/fork_exec: fixtures/fork_exec.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:

@@ -38,7 +38,14 @@ class WireSignaled:
     sig: int
 
 
-WireEvent = WireEnter | WireExit | WireExited | WireSignaled
+@dataclass(frozen=True)
+class WireSpawn:
+    pid: int
+    ts: int
+    child: int
+
+
+WireEvent = WireEnter | WireExit | WireExited | WireSignaled | WireSpawn
 
 
 def unescape(token: str) -> str:
@@ -101,6 +108,10 @@ def parse_line(line: str) -> WireEvent:
             return WireExited(pid=int(fields["pid"]), ts=int(fields["ts"]), code=int(fields["code"]))
         if kind == "SIGNALED":
             return WireSignaled(pid=int(fields["pid"]), ts=int(fields["ts"]), sig=int(fields["sig"]))
+        if kind == "SPAWN":
+            return WireSpawn(
+                pid=int(fields["pid"]), ts=int(fields["ts"]), child=int(fields["child"])
+            )
     except KeyError as missing:
         raise ValueError(f"missing field {missing} in {line!r}") from None
     raise ValueError(f"unknown event kind {kind!r}")

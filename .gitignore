@@ -11,6 +11,7 @@ __pycache__/
 collector/tracer
 collector/fixtures/story
 collector/fixtures/block
+collector/fixtures/fork_exec
 *.o
 
 # stray trace dumps
