@@ -320,7 +320,8 @@ class Scene:
             commands.append(Text(x + 5, y + 5, process.name, _COL_TEXT))
             commands.append(Text(x + 5, y + 13, f"pid {process.pid}", _COL_DIM))
             if process.in_syscall is not None:
-                commands.append(Text(x + 5, y + 23, f"{process.in_syscall}()", _COL_PULSE))
+                # Anchor to the box bottom so it stays inside a short tree box.
+                commands.append(Text(x + 5, y + h - 8, f"{process.in_syscall}()", _COL_PULSE))
             self._draw_threads(commands, process, x, y, w, h)
 
     def _draw_threads(
