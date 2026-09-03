@@ -6,3 +6,9 @@ __pycache__/
 
 # direnv
 .direnv/
+
+# collector build artifacts
+collector/tracer
+collector/fixtures/story
+collector/fixtures/block
+*.o

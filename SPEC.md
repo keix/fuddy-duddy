@@ -75,13 +75,62 @@ Everything else — shapes, colors beyond COL_OK/COL_FAIL, motion curves, extra
 decoration — is aesthetic freedom. Tests are topological (which side of the
 boundary, when) and must stay that way; do not assert exact coordinates.
 
+## Collector wire protocol (tests/test_wire.py, tests/test_tracer.py)
+
+The C tracer (`collector/tracer.c`) observes one child process via ptrace and
+emits normalized events. C owns the OS boundary only: fork/exec, waitpid,
+syscall enter/exit discrimination, register decode, reading string arguments
+from child memory. Names, semantics and visualization stay in Python.
+
+### Invocation
+
+```text
+./tracer CMD [ARGS...]
+```
+
+- The tracer spawns CMD, traces it, and emits events on **stderr** (the
+  child's stdin/stdout/stderr are left untouched).
+- The tracer's exit code mirrors the child's.
+- v1 traces a single process: no follow-fork, x86_64 only.
+
+### Event lines
+
+One event per line, UTF-8, **flushed after every line** (blocking-syscall
+visualization depends on ENTER arriving while the child is still blocked):
+
+```text
+ENTER pid=1234 ts=123456789 nr=257 args=ffffff9c,7f...,0,0,0,0 str1=README.md
+EXIT pid=1234 ts=123456999 ret=3 err=0
+EXITED pid=1234 ts=123457999 code=0
+SIGNALED pid=1234 ts=123457999 sig=9
+```
+
+- `pid`, `nr`, `ret`, `code`, `sig` are decimal; `ret` is the raw return value
+  (negative errno when `err=1`). `args` are six comma-separated lowercase hex
+  values without `0x`. `ts` is CLOCK_MONOTONIC nanoseconds, decimal.
+- `str<k>=` attaches the decoded C string behind argument index k. The tracer
+  MUST decode the path argument of `openat` (k=1); other syscalls MAY follow.
+  Values are escaped: any byte outside `0x21..0x7e`, plus `%`, is written as
+  `%xx` (two lowercase hex digits).
+- Syscall numbers, not names, cross the wire. Python resolves names via the
+  generated `syscalls_x86_64.py` table.
+- Ordering: events of one pid are strictly ordered; for a single-threaded
+  child, each ENTER is immediately followed by its EXIT (no other lines for
+  that pid in between). The stream starts after execve completes (the execve
+  itself is not reported) and ends with EXITED or SIGNALED.
+- Parsers MUST accept key=value fields in any order after the kind keyword.
+
+`src/fuddy_duddy/wire.py` is the reference parser for this protocol and is
+part of the harness, not of the implementation under test.
+
 ## Gates
 
 ```bash
-pytest -q          # semantic contract
+make -C collector  # C build; -Wall -Wextra -Werror is the C lint gate
+pytest -q          # semantic contract (builds the collector for its tests)
 ruff check src tests
 mypy src
 ```
 
-All three must pass. `python -m fuddy_duddy` must then play the scripted
+All must pass. `python -m fuddy_duddy` must then play the scripted
 `cat README.md` story: openat → read → write → close, looping.
