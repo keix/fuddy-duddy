@@ -123,6 +123,52 @@ SIGNALED pid=1234 ts=123457999 sig=9
 `src/fuddy_duddy/wire.py` is the reference parser for this protocol and is
 part of the harness, not of the implementation under test.
 
+## Live pipeline: decode and director (tests/test_decode.py, tests/test_director.py)
+
+Wiring the C collector into the visualizer needs two pure Python layers between
+the wire parser and the existing `EventSource` seam. Neither imports pyxel.
+
+```text
+tracer ──wire lines──▶ wire.parse_line ──▶ Decoder ──SyscallEvent──▶ Director ──poll(frame)──▶ App
+```
+
+### Decoder (`decode.py`, tests/test_decode.py)
+
+Turns wire events into `SyscallEvent`s. Stateful: it remembers the pending
+ENTER per pid so it can name the matching EXIT.
+
+- **D1** `WireEnter` → one `SyscallEvent`, `Phase.ENTER`, `pid` preserved, name
+  resolved through the generated syscall table (an unknown number becomes
+  `"sys_<nr>"`). Argument decoding is per syscall: `openat` sets `path` from
+  `strings[1]`; fd-first syscalls (`read`, `write`, `close`, and similar) set
+  `fd` from `args[0]`.
+- **D2** `WireExit` → one `SyscallEvent`, `Phase.EXIT`, `pid` preserved, `name`
+  taken from that pid's pending ENTER (fall back to `"?"` if none), `result` =
+  `ret` (negative on failure).
+- **D3** `WireExited` / `WireSignaled` → no `SyscallEvent` (empty list).
+- The public method is `Decoder.push(event: WireEvent) -> list[SyscallEvent]`.
+
+### Director (`director.py`, tests/test_director.py)
+
+An `EventSource` (implements `poll(frame)`) that paces live events onto frames.
+**Observation is real-time; display is playback.** It also exposes
+`feed(event)` for the collector thread to push observed events.
+
+- **P1** Every fed event is released exactly once, in FIFO order, across
+  successive `poll` calls.
+- **P2** At most one event is released per frame, and consecutive releases are
+  separated by at least a minimum visual gap, so a burst of fast syscalls stays
+  watchable. `poll` is called with monotonically non-decreasing frame numbers.
+- **P3** `feed` may run on a different thread than `poll`; the Director is
+  thread-safe.
+- **P4** With nothing fed (or nothing yet due), `poll` returns `[]`.
+
+### CLI
+
+- `python -m fuddy_duddy` → the looping scripted demo (unchanged).
+- `python -m fuddy_duddy -- CMD ARGS...` → live: trace CMD through the C tracer
+  and visualize it. Requires `make -C collector` first.
+
 ## Gates
 
 ```bash
