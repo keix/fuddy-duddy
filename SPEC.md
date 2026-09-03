@@ -35,8 +35,8 @@ keys the pairing. `Process` also has `threads: set[int]` (S9).
   ENTER: if that ENTER is a `clone` whose `args[0]` has `CLONE_THREAD`
   (`0x00010000`) set, `child` is added to the parent process's `threads` (a
   shared box). Otherwise (fork/vfork/plain clone) a new `Process` is created for
-  `child`, inheriting the parent's `name` and a copy of its `fds`, and added to
-  `processes`.
+  `child`, inheriting the parent's `name` and a copy of its `fds`, with its
+  `ppid` set to the parent's pid, and added to `processes`.
 - **S10** A successful `execve` (EXIT result >= 0) sets that pid's process
   `name` to the basename of the ENTER's `path` (the program it became). If no
   path was decoded, the name is left unchanged.
@@ -115,9 +115,11 @@ kernel space below.
   completion replaces the previous line, so a success clears a prior error; the
   line is transient and fades within a short frame budget.
 - **R12** Every process in `world.processes` is drawn as a box in userland,
-  each labeled with its `name` and `pid`. A single-process world still shows one
-  box; forks add more. execve changes a box's name (the model already switched
-  it, S10).
+  each labeled with its `name` and `pid`, laid out as a process tree: a child
+  box sits below its parent (by `ppid`), so fork reads top-down as parent →
+  child. Siblings share a row. A single-process world still shows one box;
+  forks add rows below. execve changes a box's name (the model already switched
+  it, S10). All boxes stay in userland, above the boundary.
 - **R13** When the scene is notified of a `SpawnEvent`, the child's box appears
   alongside the parent — a visible split rather than a box popping in from
   nowhere. Once the world holds the child (it will, via S9), its box is present.

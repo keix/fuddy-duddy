@@ -13,6 +13,7 @@ def test_fork_creates_a_child_process():  # S9
     world.apply(spawn(child=PID + 1))
     assert PID + 1 in world.processes
     assert world.processes[PID + 1].name == "cat"  # inherited
+    assert world.processes[PID + 1].ppid == PID  # linked to parent
     assert PID + 1 not in world.process.threads
 
 

@@ -26,6 +26,7 @@ class MemoryRegion:
 class Process:
     pid: int
     name: str
+    ppid: int = 0  # parent pid, 0 for the initial process (S9)
     in_syscall: str | None = None
     last_result: int | None = None
     fds: dict[int, FD] = field(default_factory=dict)
@@ -128,9 +129,11 @@ class World:
         ):
             parent.threads.add(event.child)  # S9: shared box.
             return
-        # S9: fork/vfork/plain clone -> a new process inheriting name and fds.
+        # S9: fork/vfork/plain clone -> a new process inheriting name and fds,
+        # linked to its parent by ppid.
         self.processes[event.child] = Process(
             pid=event.child,
             name=parent.name,
+            ppid=parent.pid,
             fds=dict(parent.fds),
         )

@@ -36,6 +36,13 @@ def test_spawn_makes_the_child_box_appear():  # R13
     assert after > before
 
 
+def test_child_box_sits_below_parent():  # R12 (process tree)
+    script = [(0, enter("fork")), (10, exited("fork", 1235)), (12, spawn(child=1235))]
+    labels = {t.text: t.y for t in texts(run_frames(script, 40)) if t.text.startswith("pid ")}
+    assert labels["pid 1235"] > labels["pid 1234"]  # child lower than parent
+    assert labels["pid 1234"] < BOUNDARY_Y and labels["pid 1235"] < BOUNDARY_Y
+
+
 def test_clone_thread_adds_a_marker_in_the_box():  # R14
     def userland_markers(script: list, frames: int) -> int:  # type: ignore[type-arg]
         return len([c for c in circles(run_frames(script, frames)) if c.y < BOUNDARY_Y])

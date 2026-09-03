@@ -64,12 +64,16 @@ _PROC_H = 34
 _PULSE_X = _PROC_X + _PROC_W // 2
 _ORIGIN_Y = _PROC_Y + _PROC_H  # where pulses are born and land back
 
-# Multi-box tiling (R12): process boxes tile left-to-right by pid in a row
-# across userland, between the R11 status line (y~2) and the boundary.
+# Multi-box tree layout (R12): process boxes form a tree. A child (linked by
+# ppid) sits in the row BELOW its parent; siblings share a row, tiled
+# left-to-right by pid. Every box (and its labels/markers) stays in userland,
+# above BOUNDARY_Y, between the R11 status line (y~2) and the boundary.
 _ROW_X = 6  # left margin of the box row
 _ROW_W = WIDTH - 2 * _ROW_X  # available width for tiled boxes
 _BOX_GAP = 6  # horizontal gap between tiled boxes
 _MAX_BOX_W = _PROC_W  # a lone box keeps the original single-box width
+_TREE_BOX_H = 28  # shorter box so several tree rows fit in userland
+_ROW_STEP = 30  # vertical distance between successive tree rows
 _REST_Y = 178  # where a blocked pulse waits in kernel space
 _FD_SEP_Y = FD_BAR_Y - 8
 
@@ -144,6 +148,9 @@ class Scene:
     # pids known at render time, in stable sorted order, so a pid maps to the
     # same box slot for both drawing (R12) and pulse origins (SPEC).
     _pids: tuple[int, ...] = ()
+    # pid -> (x, y, w, h), the tree layout computed on the latest render, so a
+    # pid maps to the same box for drawing (R12) and pulse origins (SPEC).
+    _rects: dict[int, tuple[int, int, int, int]] = field(default_factory=dict)
     _result_shown_since: int | None = None  # frame the current result landed
     _status_msg: str | None = None  # latest completed syscall, one line (R11)
     _status_color: int = COL_OK
@@ -299,9 +306,11 @@ class Scene:
 
     def _draw_process(self, commands: list[Command], world: World) -> None:
         # R12: draw every process in world.processes as a box in userland,
-        # tiled left-to-right by pid, each labeled with its name and pid.
+        # arranged as a process tree — a child sits in the row below its parent
+        # (by ppid), siblings share a row — each labeled with its name and pid.
         pids = self._box_pids(world)
         self._pids = pids
+        self._rects = self._layout(world)
         for pid in pids:
             process = world.processes[pid]
             x, y, w, h = self._box_rect(pid)
@@ -336,23 +345,51 @@ class Scene:
     def _box_pids(world: World) -> tuple[int, ...]:
         return tuple(sorted(world.processes))
 
-    def _box_rect(self, pid: int) -> tuple[int, int, int, int]:
-        """(x, y, w, h) of pid's box, tiled left-to-right in sorted order."""
-        pids = self._pids
-        n = len(pids)
-        try:
-            i = pids.index(pid)
-        except ValueError:
-            i = 0
-            n = max(1, n)
-        if n <= 1:
+    @staticmethod
+    def _depth_of(pid: int, world: World) -> int:
+        """Depth in the process tree: root(s) at 0, each ppid hop adds one.
+
+        Walks ppid up to a root (ppid 0, or a parent not in the world). Guards
+        against cycles / self-parents so a malformed link can't loop forever.
+        """
+        depth = 0
+        seen = {pid}
+        cur = world.processes[pid].ppid
+        while cur and cur in world.processes and cur not in seen:
+            seen.add(cur)
+            depth += 1
+            cur = world.processes[cur].ppid
+        return depth
+
+    def _layout(self, world: World) -> dict[int, tuple[int, int, int, int]]:
+        """Compute every box's (x, y, w, h) as a process tree (R12)."""
+        pids = self._box_pids(world)
+        if len(pids) <= 1:
             # A lone process keeps the original single-box placement, so the
             # single-process scene is pixel-stable.
-            return _PROC_X, _PROC_Y, _PROC_W, _PROC_H
-        slot = (_ROW_W - (n - 1) * _BOX_GAP) // n
-        w = max(24, min(_MAX_BOX_W, slot))
-        x = _ROW_X + i * (slot + _BOX_GAP)
-        return x, _PROC_Y, w, _PROC_H
+            return {pid: (_PROC_X, _PROC_Y, _PROC_W, _PROC_H) for pid in pids}
+        rows: dict[int, list[int]] = {}
+        for pid in pids:  # pids is sorted, so each row is ordered by pid
+            rows.setdefault(self._depth_of(pid, world), []).append(pid)
+        rects: dict[int, tuple[int, int, int, int]] = {}
+        for depth, row in rows.items():
+            y = _PROC_Y + depth * _ROW_STEP
+            n = len(row)
+            slot = (_ROW_W - (n - 1) * _BOX_GAP) // n
+            w = max(24, min(_MAX_BOX_W, slot))
+            for i, pid in enumerate(row):
+                x = _ROW_X + i * (slot + _BOX_GAP)
+                rects[pid] = (x, y, w, _TREE_BOX_H)
+        return rects
+
+    def _box_rect(self, pid: int) -> tuple[int, int, int, int]:
+        """(x, y, w, h) of pid's box from the latest tree layout (R12)."""
+        rect = self._rects.get(pid)
+        if rect is not None:
+            return rect
+        # Before the first render (or for an unknown pid) fall back to the lone
+        # single-box placement, keeping pulse origins sane on the first ENTER.
+        return _PROC_X, _PROC_Y, _PROC_W, _PROC_H
 
     def _origin_x_for(self, pid: int) -> int:
         """Map a pid to the center x of its box (SPEC: pulse origin)."""
