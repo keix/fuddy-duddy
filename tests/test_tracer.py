@@ -131,6 +131,18 @@ def test_follows_fork_into_the_child(tracer: Path) -> None:
     )
 
 
+def test_execve_path_is_decoded(tracer: Path) -> None:
+    proc = subprocess.run(
+        [str(tracer), str(COLLECTOR / "fixtures" / "fork_exec")],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    events = parse_stream(proc.stderr)
+    execs = [e for e in events if isinstance(e, WireEnter) and e.nr == NR["execve"]]
+    assert any(e.strings.get(0) == "/bin/true" for e in execs), "execve path not decoded at str0"
+
+
 def test_enter_is_emitted_while_child_is_blocked(tracer: Path) -> None:
     """The flush contract: ENTER of a blocking read must arrive before EXIT."""
     proc = subprocess.Popen(

@@ -23,9 +23,23 @@ EventSource ──SyscallEvent──▶ World ──state──▶ Scene ──C
 
 ## Model semantics (tests/test_model.py)
 
-- **S0** If `process.pid` is 0 (unknown), an applied event adopts its `pid`. The
-  live collector starts the world before the child's pid is known; the first
-  observed event fills it in.
+The world holds many processes: `World.processes` is a dict keyed by pid, and
+`World.process` is the initial one (back-compat for a single-process world). A
+`SyscallEvent` applies to `processes[event.pid]`; per-pid pending-ENTER state
+keys the pairing. `Process` also has `threads: set[int]` (S9).
+
+- **S0** If the initial process's pid is 0 (unknown), the first applied event
+  adopts its `pid` (rekeying it in `processes`). The live collector starts the
+  world before the child's pid is known; the first observed event fills it in.
+- **S9** A `SpawnEvent(parent, child)` is applied against the parent's pending
+  ENTER: if that ENTER is a `clone` whose `args[0]` has `CLONE_THREAD`
+  (`0x00010000`) set, `child` is added to the parent process's `threads` (a
+  shared box). Otherwise (fork/vfork/plain clone) a new `Process` is created for
+  `child`, inheriting the parent's `name` and a copy of its `fds`, and added to
+  `processes`.
+- **S10** A successful `execve` (EXIT result >= 0) sets that pid's process
+  `name` to the basename of the ENTER's `path` (the program it became). If no
+  path was decoded, the name is left unchanged.
 - **S1** ENTER sets `process.in_syscall` to the syscall name.
 - **S2** EXIT clears `in_syscall` and records `result` in `process.last_result`.
 - **S3** A successful `openat` (EXIT result >= 0) creates `fds[result]` whose
@@ -143,9 +157,9 @@ SIGNALED pid=1234 ts=123457999 sig=9
   (negative errno when `err=1`). `args` are six comma-separated lowercase hex
   values without `0x`. `ts` is CLOCK_MONOTONIC nanoseconds, decimal.
 - `str<k>=` attaches the decoded C string behind argument index k. The tracer
-  MUST decode the path argument of `openat` (k=1); other syscalls MAY follow.
-  Values are escaped: any byte outside `0x21..0x7e`, plus `%`, is written as
-  `%xx` (two lowercase hex digits).
+  MUST decode the path arguments of `openat` (k=1) and `execve` (k=0); other
+  syscalls MAY follow. Values are escaped: any byte outside `0x21..0x7e`, plus
+  `%`, is written as `%xx` (two lowercase hex digits).
 - Syscall numbers, not names, cross the wire. Python resolves names via the
   generated `syscalls_x86_64.py` table.
 - `SPAWN pid=P ts=... child=C` is emitted when process `P` creates a child `C`
@@ -180,13 +194,16 @@ ENTER per pid so it can name the matching EXIT.
 - **D1** `WireEnter` → one `SyscallEvent`, `Phase.ENTER`, `pid` preserved, name
   resolved through the generated syscall table (an unknown number becomes
   `"sys_<nr>"`). Argument decoding is per syscall: `openat` sets `path` from
-  `strings[1]`; fd-first syscalls (`read`, `write`, `close`, and similar) set
-  `fd` from `args[0]`.
+  `strings[1]`, `execve` sets `path` from `strings[0]`; fd-first syscalls
+  (`read`, `write`, `close`, and similar) set `fd` from `args[0]`. The raw
+  `args` tuple is always carried through.
 - **D2** `WireExit` → one `SyscallEvent`, `Phase.EXIT`, `pid` preserved, `name`
   taken from that pid's pending ENTER (fall back to `"?"` if none), `result` =
   `ret` (negative on failure).
-- **D3** `WireExited` / `WireSignaled` → no `SyscallEvent` (empty list).
-- The public method is `Decoder.push(event: WireEvent) -> list[SyscallEvent]`.
+- **D3** `WireExited` / `WireSignaled` → no event (empty list).
+- **D4** `WireSpawn` → one `SpawnEvent(parent=pid, child=child)`.
+- The public method is `Decoder.push(event: WireEvent) -> list[Event]`, where
+  `Event` is `SyscallEvent | SpawnEvent`.
 
 ### Director (`director.py`, tests/test_director.py)
 

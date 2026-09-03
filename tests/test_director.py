@@ -3,7 +3,7 @@
 from itertools import pairwise
 
 from fuddy_duddy.director import ENTER_HOLD_FRAMES, MIN_GAP_FRAMES, Director
-from fuddy_duddy.event import Phase, SyscallEvent
+from fuddy_duddy.event import Phase, SpawnEvent, SyscallEvent
 
 
 def ev(name: str) -> SyscallEvent:
@@ -21,6 +21,14 @@ def test_empty_director_releases_nothing():  # P4
     director = Director()
     assert director.poll(0) == []
     assert director.poll(100) == []
+
+
+def test_spawn_events_flow_through():  # P1 with SpawnEvent
+    director = Director()
+    director.feed(SpawnEvent(parent=1, child=2))
+    released = [director.poll(frame) for frame in range(50)]
+    flat = [e for batch in released for e in batch]
+    assert flat == [SpawnEvent(parent=1, child=2)]
 
 
 def test_all_fed_events_released_in_order():  # P1

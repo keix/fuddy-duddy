@@ -170,13 +170,19 @@ static void handle_syscall_stop(pid_t pid) {
             (unsigned long long)info.entry.args[4],
             (unsigned long long)info.entry.args[5]);
 
-        /* Decode openat path (arg index 1). */
-        if (nr == 257 && n > 0 && (size_t)n < sizeof(line)) {
+        /* Decode a path argument: openat's is arg 1 (str1), execve's is arg 0
+         * (str0). The str index matches the argument index. */
+        int str_arg = -1;
+        if (nr == 257)  /* openat */
+            str_arg = 1;
+        else if (nr == 59)  /* execve */
+            str_arg = 0;
+        if (str_arg >= 0 && n > 0 && (size_t)n < sizeof(line)) {
             char esc[6144];
-            if (read_child_string(pid, info.entry.args[1],
+            if (read_child_string(pid, info.entry.args[str_arg],
                                   esc, sizeof(esc)) == 0) {
                 int m = snprintf(line + n, sizeof(line) - (size_t)n,
-                                 " str1=%s", esc);
+                                 " str%d=%s", str_arg, esc);
                 if (m > 0)
                     n += m;
             }

@@ -1,9 +1,9 @@
-"""Contract for the wire->SyscallEvent decoder (SPEC.md D1-D3)."""
+"""Contract for the wire->event decoder (SPEC.md D1-D4)."""
 
 from fuddy_duddy.decode import Decoder
-from fuddy_duddy.event import Phase
+from fuddy_duddy.event import Phase, SpawnEvent
 from fuddy_duddy.syscalls_x86_64 import NR
-from fuddy_duddy.wire import WireEnter, WireExit, WireExited, WireSignaled
+from fuddy_duddy.wire import WireEnter, WireExit, WireExited, WireSignaled, WireSpawn
 
 ARGS0 = (0, 0, 0, 0, 0, 0)
 
@@ -57,3 +57,16 @@ def test_process_end_yields_nothing():  # D3
     decoder = Decoder()
     assert decoder.push(WireExited(pid=7, ts=1, code=0)) == []
     assert decoder.push(WireSignaled(pid=7, ts=1, sig=9)) == []
+
+
+def test_execve_carries_path():  # D1
+    [event] = Decoder().push(enter(NR["execve"], strings={0: "/bin/ls"}))
+    assert event.name == "execve"
+    assert event.path == "/bin/ls"
+
+
+def test_spawn_becomes_spawn_event():  # D4
+    [event] = Decoder().push(WireSpawn(pid=100, ts=0, child=101))
+    assert isinstance(event, SpawnEvent)
+    assert event.parent == 100
+    assert event.child == 101

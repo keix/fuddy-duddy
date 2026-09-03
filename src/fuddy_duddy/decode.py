@@ -4,9 +4,9 @@ Stateful: remembers the pending ENTER per pid so the matching EXIT can be
 named. Pure Python; must not import pyxel.
 """
 
-from .event import Phase, SyscallEvent
+from .event import Event, Phase, SpawnEvent, SyscallEvent
 from .syscalls_x86_64 import NAMES
-from .wire import WireEnter, WireEvent, WireExit
+from .wire import WireEnter, WireEvent, WireExit, WireSpawn
 
 # Syscalls whose first argument is a file descriptor. These get `fd` set from
 # args[0] at ENTER time (SPEC.md D1).
@@ -62,11 +62,15 @@ class Decoder:
         # pid -> pending ENTER syscall name.
         self._pending: dict[int, str] = {}
 
-    def push(self, event: WireEvent) -> list[SyscallEvent]:
+    def push(self, event: WireEvent) -> list[Event]:
         if isinstance(event, WireEnter):
             name = _name(event.nr)
             self._pending[event.pid] = name
-            path = event.strings.get(1) if name == "openat" else None
+            path: str | None = None
+            if name == "openat":
+                path = event.strings.get(1)
+            elif name == "execve":
+                path = event.strings.get(0)
             fd = event.args[0] if name in _FD_FIRST else None
             return [
                 SyscallEvent(
@@ -88,5 +92,8 @@ class Decoder:
                     result=event.ret,
                 )
             ]
-        # WireExited / WireSignaled (D3): no SyscallEvent.
+        if isinstance(event, WireSpawn):
+            # D4: WireSpawn -> SpawnEvent(parent, child).
+            return [SpawnEvent(parent=event.pid, child=event.child)]
+        # WireExited / WireSignaled (D3): no event.
         return []

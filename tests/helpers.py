@@ -1,5 +1,5 @@
 from fuddy_duddy.app import App
-from fuddy_duddy.event import Phase, SyscallEvent
+from fuddy_duddy.event import Phase, SpawnEvent, SyscallEvent
 from fuddy_duddy.model import Process, World
 from fuddy_duddy.render import Circle, Command, Text
 from fuddy_duddy.scene import Scene
@@ -8,12 +8,16 @@ from fuddy_duddy.source import ScriptedSource
 PID = 1234
 
 
-def enter(name: str, **kwargs: object) -> SyscallEvent:
-    return SyscallEvent(PID, name, Phase.ENTER, **kwargs)  # type: ignore[arg-type]
+def enter(name: str, pid: int = PID, **kwargs: object) -> SyscallEvent:
+    return SyscallEvent(pid, name, Phase.ENTER, **kwargs)  # type: ignore[arg-type]
 
 
-def exited(name: str, result: int, **kwargs: object) -> SyscallEvent:
-    return SyscallEvent(PID, name, Phase.EXIT, result=result, **kwargs)  # type: ignore[arg-type]
+def exited(name: str, result: int, pid: int = PID, **kwargs: object) -> SyscallEvent:
+    return SyscallEvent(pid, name, Phase.EXIT, result=result, **kwargs)  # type: ignore[arg-type]
+
+
+def spawn(child: int, parent: int = PID) -> SpawnEvent:
+    return SpawnEvent(parent=parent, child=child)
 
 
 def make_world() -> World:

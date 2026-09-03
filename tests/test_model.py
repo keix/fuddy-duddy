@@ -1,7 +1,46 @@
-"""Semantic contract for the world model (SPEC.md S0-S6)."""
+"""Semantic contract for the world model (SPEC.md S0-S10)."""
 
 from fuddy_duddy.model import Process, World
-from helpers import PID, enter, exited, make_world
+from helpers import PID, enter, exited, make_world, spawn
+
+CLONE_THREAD = 0x00010000
+
+
+def test_fork_creates_a_child_process():  # S9
+    world = make_world()  # pid 1234, name "cat"
+    world.apply(enter("fork"))
+    world.apply(exited("fork", PID + 1))
+    world.apply(spawn(child=PID + 1))
+    assert PID + 1 in world.processes
+    assert world.processes[PID + 1].name == "cat"  # inherited
+    assert PID + 1 not in world.process.threads
+
+
+def test_clone_thread_adds_a_thread_not_a_process():  # S9
+    world = make_world()
+    world.apply(enter("clone", args=(CLONE_THREAD, 0, 0, 0, 0, 0)))
+    world.apply(spawn(child=PID + 1))
+    assert PID + 1 in world.process.threads
+    assert PID + 1 not in world.processes
+
+
+def test_execve_switches_the_process_name():  # S10
+    world = make_world()  # name "cat"
+    world.apply(enter("execve", path="/bin/ls"))
+    world.apply(exited("execve", 0))
+    assert world.process.name == "ls"
+
+
+def test_a_syscall_applies_to_its_own_process():  # multi-process
+    world = make_world()  # 1234
+    world.apply(enter("fork"))
+    world.apply(exited("fork", PID + 1))
+    world.apply(spawn(child=PID + 1))
+    # The child opens a file; the parent must be unaffected.
+    world.apply(enter("openat", pid=PID + 1, path="child.txt"))
+    world.apply(exited("openat", 5, pid=PID + 1))
+    assert 5 in world.processes[PID + 1].fds
+    assert 5 not in world.process.fds
 
 
 def test_pid_is_adopted_from_first_event_when_unknown():  # S0
