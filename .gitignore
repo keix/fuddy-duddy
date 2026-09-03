@@ -12,3 +12,6 @@ collector/tracer
 collector/fixtures/story
 collector/fixtures/block
 *.o
+
+# stray trace dumps
+*.log

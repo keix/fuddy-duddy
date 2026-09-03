@@ -65,6 +65,7 @@ _FD_SEP_Y = FD_BAR_Y - 8
 _DESCEND_FRAMES = 18
 _RETURN_FRAMES = 14
 _RING_TTL = 10  # impact rings; far below the 30-frame cap
+_FAIL_RESULT_TTL = 30  # frames a failure result lingers before fading (R6)
 
 _BOB = (0, -1, -1, 0, 1, 1)  # idle wobble for a waiting pulse
 _DASH = 8  # boundary dash length
@@ -105,6 +106,7 @@ class Scene:
     _frame: int = 0
     _pulse: _Pulse | None = None
     _rings: list[_Ring] = field(default_factory=list)
+    _result_shown_since: int | None = None  # frame the current result landed
 
     def notify(self, event: SyscallEvent) -> None:
         """React to an event the world just applied."""
@@ -149,6 +151,7 @@ class Scene:
                     _Ring(_PULSE_X, _ORIGIN_Y, self._result_color(pulse.result or 0))
                 )
                 self._pulse = None
+                self._result_shown_since = self._frame
 
     def render(self, world: World) -> list[Command]:
         """Emit the commands for the current frame."""
@@ -187,12 +190,18 @@ class Scene:
     def _draw_result(self, commands: list[Command], world: World) -> None:
         # R5/R6: last result as "= {result}" in userland, colored by sign.
         # Held back while the pulse is still riding home so the value visibly
-        # arrives with it; shown persistently afterwards.
+        # arrives with it. A success then persists; a failure fades (R6).
         result = world.process.last_result
         if result is None:
             return
         pulse = self._pulse
         if pulse is not None and pulse.state is _PulseState.RETURN:
+            return
+        faded = (
+            self._result_shown_since is not None
+            and self._frame - self._result_shown_since > _FAIL_RESULT_TTL
+        )
+        if result < 0 and faded:
             return
         color = self._result_color(result)
         commands.append(Text(_PROC_X + _PROC_W + 6, _PROC_Y + 13, f"= {result}", color))
@@ -217,7 +226,9 @@ class Scene:
                 trail_y = y - direction * k * 5
                 if _ORIGIN_Y <= trail_y <= _REST_Y:
                     commands.append(Circle(_PULSE_X, trail_y, max(1, 3 - k), _COL_DIM))
-        commands.append(Circle(_PULSE_X, y, 3, color))
+        # R6: a failing return is drawn smaller, so it reads as minor.
+        radius = 2 if pulse.state is _PulseState.RETURN and (pulse.result or 0) < 0 else 3
+        commands.append(Circle(_PULSE_X, y, radius, color))
 
         # R4: a blocked syscall is named where it waits, below the boundary.
         commands.append(Text(_PULSE_X + 8, y - 2, pulse.name, _COL_NAME))

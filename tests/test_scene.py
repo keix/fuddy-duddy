@@ -60,12 +60,14 @@ def test_result_waits_for_the_pulse_to_return():  # R5 temporal invariant
         assert not (pulse_in_kernel and result_shown)
 
 
-def test_failed_syscall_reports_failure():  # R6
+def test_failed_result_shows_then_fades():  # R6
     script = [(0, enter("openat", path="missing.txt")), (40, exited("openat", -2))]
-    commands = run_frames(script, 120)
-    assert any(
-        t.text == "= -2" and t.y < BOUNDARY_Y and t.color == COL_FAIL for t in texts(commands)
-    )
+    # Shortly after the pulse returns, the failure is visible and red.
+    early = texts(run_frames(script, 60))
+    assert any(t.text == "= -2" and t.y < BOUNDARY_Y and t.color == COL_FAIL for t in early)
+    # Long after, it has faded — unlike a success, which persists (R5).
+    late = texts(run_frames(script, 120))
+    assert not any(t.text == "= -2" for t in late)
 
 
 def test_open_fd_appears_in_fd_bar():  # R7

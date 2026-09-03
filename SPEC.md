@@ -61,7 +61,12 @@ kernel space below.
   pulse has returned, kernel space holds only static furniture (backdrop,
   boundary, labels, FD bar) — no syscall-specific leftovers of any command
   type, including the syscall name Text.
-- **R6** A failed syscall's result text uses `COL_FAIL` instead.
+- **R6** A failed syscall's result also appears in userland in `COL_FAIL`, but
+  unlike a success it is *transient*: it fades within a short frame budget
+  instead of persisting, and its returning pulse is drawn more faintly. This
+  keeps a storm of startup ENOENTs (loader and locale probing, ordinary in any
+  real process) from burying the real work, while a successful result still
+  persists at least until the next ENTER (R5).
 - **R7** While an FD is open, an entry whose Text begins with the fd number
   appears at y >= `FD_BAR_Y`; after close it disappears. The band at
   y >= `FD_BAR_Y` is reserved exclusively for open-FD entries — nothing else
