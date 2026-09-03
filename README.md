@@ -46,9 +46,14 @@ python -m fuddy_duddy -- cat README.md   # trace a real command
 A process begins in Userland, crosses the user/kernel boundary through a system
 call, and reaches the subsystem it touches: FILE, MEM, PROC, or NET.
 
-The return path is shown in green on success and red on failure.
+The return path is shown in green on success and red on failure. When a process
+exits, its box leaves the tree.
 
 Press `Q` or `Esc` to quit.
+
+Fuddy-Duddy is an observation instrument, not a profiler: tracing through ptrace
+slows the traced program, but that never matters here — the point is to *see* the
+execution model, not to measure it.
 
 ## License
 Copyright Kei Sawamura 2026.

@@ -26,5 +26,17 @@ class SpawnEvent:
     child: int
 
 
+@dataclass(frozen=True)
+class ExitEvent:
+    """A traced process terminated (SPEC.md S11).
+
+    `code` is set for a normal exit, `signal` for a kill; exactly one is set.
+    """
+
+    pid: int
+    code: int | None = None
+    signal: int | None = None
+
+
 # Anything that flows from the collector through the director into the world.
-Event = SyscallEvent | SpawnEvent
+Event = SyscallEvent | SpawnEvent | ExitEvent

@@ -1,12 +1,12 @@
-"""Wire events -> SyscallEvents (SPEC.md D1-D3).
+"""Wire events -> SyscallEvents (SPEC.md D1-D4).
 
 Stateful: remembers the pending ENTER per pid so the matching EXIT can be
 named. Pure Python; must not import pyxel.
 """
 
-from .event import Event, Phase, SpawnEvent, SyscallEvent
+from .event import Event, ExitEvent, Phase, SpawnEvent, SyscallEvent
 from .syscalls_x86_64 import NAMES
-from .wire import WireEnter, WireEvent, WireExit, WireSpawn
+from .wire import WireEnter, WireEvent, WireExit, WireExited, WireSignaled, WireSpawn
 
 # Syscalls whose first argument is a file descriptor. These get `fd` set from
 # args[0] at ENTER time (SPEC.md D1).
@@ -95,5 +95,12 @@ class Decoder:
         if isinstance(event, WireSpawn):
             # D4: WireSpawn -> SpawnEvent(parent, child).
             return [SpawnEvent(parent=event.pid, child=event.child)]
-        # WireExited / WireSignaled (D3): no event.
+        if isinstance(event, WireExited):
+            # D3: process end -> ExitEvent. Drop any dangling pending ENTER; a
+            # process that died mid-syscall has no matching EXIT coming.
+            self._pending.pop(event.pid, None)
+            return [ExitEvent(pid=event.pid, code=event.code)]
+        if isinstance(event, WireSignaled):
+            self._pending.pop(event.pid, None)
+            return [ExitEvent(pid=event.pid, signal=event.sig)]
         return []

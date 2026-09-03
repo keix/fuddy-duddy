@@ -1,7 +1,7 @@
-"""Semantic contract for the world model (SPEC.md S0-S10)."""
+"""Semantic contract for the world model (SPEC.md S0-S11)."""
 
 from fuddy_duddy.model import Process, World
-from helpers import PID, enter, exited, make_world, spawn
+from helpers import PID, died, enter, exited, make_world, spawn
 
 CLONE_THREAD = 0x00010000
 
@@ -23,6 +23,29 @@ def test_clone_thread_adds_a_thread_not_a_process():  # S9
     world.apply(spawn(child=PID + 1))
     assert PID + 1 in world.process.threads
     assert PID + 1 not in world.processes
+
+
+def test_exit_removes_a_child_process():  # S11
+    world = make_world()  # pid 1234
+    world.apply(enter("fork"))
+    world.apply(exited("fork", PID + 1))
+    world.apply(spawn(child=PID + 1))
+    assert PID + 1 in world.processes
+    world.apply(died(PID + 1))
+    assert PID + 1 not in world.processes
+
+
+def test_exit_keeps_the_initial_process():  # S11
+    world = make_world()  # pid 1234 is the root
+    world.apply(died(PID))
+    assert PID in world.processes  # the frame of reference stays
+    assert world.process.pid == PID
+
+
+def test_exit_of_unknown_pid_is_ignored():  # S11
+    world = make_world()
+    world.apply(died(PID + 99))  # never spawned
+    assert set(world.processes) == {PID}
 
 
 def test_execve_switches_the_process_name():  # S10

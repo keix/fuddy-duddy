@@ -60,6 +60,10 @@ keys the pairing. `Process` also has `threads: set[int]` (S9).
   the ENTER's `args[1]`. A failed `mmap` creates no region (S4 still applies).
 - **S8** A successful `munmap` removes the region at the ENTER's `args[0]`
   (`regions.pop(args[0], None)`).
+- **S11** An `ExitEvent(pid)` removes `processes[pid]` (and any pending ENTER for
+  it), so a terminated process's box disappears from the tree. The initial/root
+  process is kept as the frame of reference — the whole app is torn down when it
+  dies — and an `ExitEvent` for an unknown pid is a no-op.
 
 ## Scene semantics (tests/test_scene.py)
 
@@ -126,6 +130,9 @@ kernel space below.
 - **R14** A process whose `threads` is non-empty shows a marker per thread
   inside its box, so a clone-thread reads as one box gaining threads rather than
   a second box.
+- **R15** When the scene is notified of an `ExitEvent`, the model has already
+  removed the box (S11); the scene leaves a short poof at the box's last spot so
+  the disappearance reads as an event, not a glitch. It settles within 30 frames.
 - A syscall's pulse originates from the box of the process whose event it is
   (`event.pid`), so R3's crossing starts at the right process.
 - Transient effects (impact flashes etc.) are welcome but must die within 30
@@ -214,10 +221,12 @@ ENTER per pid so it can name the matching EXIT.
 - **D2** `WireExit` → one `SyscallEvent`, `Phase.EXIT`, `pid` preserved, `name`
   taken from that pid's pending ENTER (fall back to `"?"` if none), `result` =
   `ret` (negative on failure).
-- **D3** `WireExited` / `WireSignaled` → no event (empty list).
+- **D3** `WireExited` → one `ExitEvent(pid, code=code)`; `WireSignaled` → one
+  `ExitEvent(pid, signal=sig)`. Either also drops that pid's dangling pending
+  ENTER (a process that died mid-syscall has no matching EXIT coming).
 - **D4** `WireSpawn` → one `SpawnEvent(parent=pid, child=child)`.
 - The public method is `Decoder.push(event: WireEvent) -> list[Event]`, where
-  `Event` is `SyscallEvent | SpawnEvent`.
+  `Event` is `SyscallEvent | SpawnEvent | ExitEvent`.
 
 ### Director (`director.py`, tests/test_director.py)
 
