@@ -41,7 +41,7 @@ from .render import (
     zone_bounds,
     zone_center,
 )
-from .subsystems import classify
+from .subsystems import Subsystem, classify
 
 # Extra palette indices (Pyxel default palette).
 _COL_KERNEL_BG = 1  # navy backdrop for kernel space
@@ -53,6 +53,7 @@ _COL_TEXT = 7  # white
 _COL_DIM = 5  # dark grey
 _COL_PULSE = 10  # yellow pulse in flight / waiting
 _COL_NAME = 9  # orange syscall name tag
+_COL_MEM = 3  # dark green memory-region blocks (R10)
 
 # Layout.
 _PROC_X = 88
@@ -173,6 +174,7 @@ class Scene:
         self._draw_spaces(commands)
         self._draw_process(commands, world)
         self._draw_result(commands, world)
+        self._draw_regions(commands, world)
         self._draw_pulse(commands)
         self._draw_fd_bar(commands, world)
         self._draw_rings(commands)
@@ -204,6 +206,25 @@ class Scene:
             hot = active_x is not None and x0 <= active_x < x0 + w
             color = _COL_NAME if hot else _COL_DIM
             commands.append(Text(x0 + 4, BOUNDARY_Y + 16, ZONE_LABELS[sub], color))
+
+    def _draw_regions(self, commands: list[Command], world: World) -> None:
+        # R10: the process's live memory regions drawn as small blocks inside
+        # the MEM zone below the boundary. mmap adds a block, munmap removes it.
+        # The blocks are gridded in a band well above the FD bar so nothing
+        # here strays into the FD-only band at FD_BAR_Y.
+        x0, w = zone_bounds(Subsystem.MEMORY)
+        block = 6
+        gap = 2
+        pad = 4
+        cols = max(1, (w - 2 * pad) // (block + gap))
+        top = BOUNDARY_Y + 24  # below the zone label, above the FD bar band
+        for i, start in enumerate(sorted(world.process.regions)):
+            row, col = divmod(i, cols)
+            bx = x0 + pad + col * (block + gap)
+            by = top + row * (block + gap)
+            if by + block >= _FD_SEP_Y:  # never intrude on the FD bar band
+                break
+            commands.append(Rect(bx, by, block, block, _COL_MEM))
 
     def _draw_process(self, commands: list[Command], world: World) -> None:
         process = world.process

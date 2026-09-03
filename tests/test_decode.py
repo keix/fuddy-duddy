@@ -32,6 +32,11 @@ def test_unknown_number_becomes_sys_nr():  # D1
     assert event.phase is Phase.ENTER
 
 
+def test_enter_carries_raw_args():  # D1
+    [event] = Decoder().push(enter(NR["mmap"], args=(0, 4096, 3, 34, 0, 0)))
+    assert event.args == (0, 4096, 3, 34, 0, 0)
+
+
 def test_exit_takes_name_from_pending_enter():  # D2
     decoder = Decoder()
     decoder.push(enter(NR["openat"], strings={1: "README.md"}))

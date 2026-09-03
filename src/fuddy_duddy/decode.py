@@ -75,6 +75,7 @@ class Decoder:
                     phase=Phase.ENTER,
                     path=path,
                     fd=fd,
+                    args=event.args,
                 )
             ]
         if isinstance(event, WireExit):

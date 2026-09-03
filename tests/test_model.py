@@ -49,6 +49,30 @@ def test_close_removes_fd():  # S5
     assert 3 not in world.process.fds
 
 
+def test_mmap_creates_region():  # S7
+    world = make_world()
+    world.apply(enter("mmap", args=(0, 4096, 3, 34, 0, 0)))
+    world.apply(exited("mmap", 0x1000))
+    assert 0x1000 in world.process.regions
+    assert world.process.regions[0x1000].length == 4096
+
+
+def test_failed_mmap_creates_no_region():  # S7
+    world = make_world()
+    world.apply(enter("mmap", args=(0, 4096, 3, 34, 0, 0)))
+    world.apply(exited("mmap", -12))  # ENOMEM
+    assert world.process.regions == {}
+
+
+def test_munmap_removes_region():  # S8
+    world = make_world()
+    world.apply(enter("mmap", args=(0, 4096, 3, 34, 0, 0)))
+    world.apply(exited("mmap", 0x1000))
+    world.apply(enter("munmap", args=(0x1000, 4096, 0, 0, 0, 0)))
+    world.apply(exited("munmap", 0))
+    assert 0x1000 not in world.process.regions
+
+
 def test_unknown_syscall_changes_no_state():  # S6
     world = make_world()
     world.apply(enter("ioctl", fd=0))

@@ -41,6 +41,11 @@ EventSource ──SyscallEvent──▶ World ──state──▶ Scene ──C
 - **S5** A successful `close` removes `fds[event.fd]`.
 - **S6** Unknown syscalls perform S1/S2 bookkeeping only. They must not raise
   and must not change fds or other state.
+- **S7** A successful `mmap` (EXIT result >= 0, the mapped address) creates
+  `regions[result] = MemoryRegion(start=result, length=...)`, where `length` is
+  the ENTER's `args[1]`. A failed `mmap` creates no region (S4 still applies).
+- **S8** A successful `munmap` removes the region at the ENTER's `args[0]`
+  (`regions.pop(args[0], None)`).
 
 ## Scene semantics (tests/test_scene.py)
 
@@ -84,6 +89,10 @@ kernel space below.
   syscall waits in the kernel (R4), its pulse's x is within that zone's
   `render.zone_bounds`. Unknown syscalls (OTHER) still cross the boundary (R8)
   but need not fall in a labeled zone.
+- **R10** The process's live memory regions (`world.process.regions`) are drawn
+  as small blocks (Rect commands) inside the MEM zone below the boundary. A
+  successful `mmap` adds a block; a `munmap` removes it — the MEM zone visibly
+  grows and shrinks as mappings come and go.
 - Transient effects (impact flashes etc.) are welcome but must die within 30
   frames so R5's "nothing left below the boundary" holds.
 

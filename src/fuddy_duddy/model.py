@@ -14,6 +14,12 @@ class FD:
     target: str | None
 
 
+@dataclass(frozen=True)
+class MemoryRegion:
+    start: int
+    length: int
+
+
 @dataclass
 class Process:
     pid: int
@@ -21,6 +27,7 @@ class Process:
     in_syscall: str | None = None
     last_result: int | None = None
     fds: dict[int, FD] = field(default_factory=dict)
+    regions: dict[int, MemoryRegion] = field(default_factory=dict)  # keyed by start
 
 
 class World:
@@ -69,4 +76,17 @@ class World:
         ):
             # S5: the fd being closed was named at ENTER time.
             process.fds.pop(pending.fd, None)
+        elif event.name == "mmap" and pending is not None and pending.name == "mmap":
+            # S7: the mapped address (result) is the region start; its length
+            # was the ENTER's args[1].
+            length = pending.args[1] if len(pending.args) > 1 else 0
+            process.regions[event.result] = MemoryRegion(start=event.result, length=length)
+        elif (
+            event.name == "munmap"
+            and pending is not None
+            and pending.name == "munmap"
+            and pending.args
+        ):
+            # S8: unmap the region at the ENTER's args[0].
+            process.regions.pop(pending.args[0], None)
         return event

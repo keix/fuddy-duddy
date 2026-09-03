@@ -15,7 +15,7 @@ from fuddy_duddy.render import (
     zone_bounds,
 )
 from fuddy_duddy.subsystems import Subsystem
-from helpers import circles, enter, exited, make_app, run_frames, texts
+from helpers import circles, enter, exited, make_app, make_world, run_frames, texts
 
 
 def near_boundary(command: object) -> bool:
@@ -128,3 +128,30 @@ def test_memory_syscall_lands_in_memory_zone():  # R9
 
 def test_process_syscall_lands_in_process_zone():  # R9
     assert _in_zone(_waiting_pulse_x("clone"), Subsystem.PROCESS)
+
+
+def _mem_zone_blocks(world: object) -> int:
+    from fuddy_duddy.model import World
+    from fuddy_duddy.scene import Scene
+
+    assert isinstance(world, World)
+    commands = Scene().render(world)
+    x0, w = zone_bounds(Subsystem.MEMORY)
+    return sum(
+        1
+        for c in commands
+        if isinstance(c, Rect) and c.y > BOUNDARY_Y and x0 <= c.x < x0 + w
+    )
+
+
+def test_mmap_grows_and_munmap_shrinks_the_mem_zone():  # R10
+    world = make_world()
+    before = _mem_zone_blocks(world)
+    world.apply(enter("mmap", args=(0, 4096, 3, 34, 0, 0)))
+    world.apply(exited("mmap", 0x1000))
+    mapped = _mem_zone_blocks(world)
+    world.apply(enter("munmap", args=(0x1000, 4096, 0, 0, 0, 0)))
+    world.apply(exited("munmap", 0))
+    unmapped = _mem_zone_blocks(world)
+    assert mapped > before
+    assert unmapped < mapped
