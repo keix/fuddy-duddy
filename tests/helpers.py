@@ -1,5 +1,5 @@
 from fuddy_duddy.app import App
-from fuddy_duddy.event import Phase, SpawnEvent, SyscallEvent
+from fuddy_duddy.event import ExitEvent, Phase, SpawnEvent, SyscallEvent
 from fuddy_duddy.model import Process, World
 from fuddy_duddy.render import Circle, Command, Text
 from fuddy_duddy.scene import Scene
@@ -18,6 +18,10 @@ def exited(name: str, result: int, pid: int = PID, **kwargs: object) -> SyscallE
 
 def spawn(child: int, parent: int = PID) -> SpawnEvent:
     return SpawnEvent(parent=parent, child=child)
+
+
+def died(pid: int, code: int = 0) -> ExitEvent:
+    return ExitEvent(pid=pid, code=code)
 
 
 def make_world() -> World:

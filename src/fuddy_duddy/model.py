@@ -5,7 +5,7 @@ The contract is SPEC.md rules S0-S10, enforced by tests/test_model.py.
 
 from dataclasses import dataclass, field
 
-from .event import Event, Phase, SpawnEvent, SyscallEvent
+from .event import Event, ExitEvent, Phase, SpawnEvent, SyscallEvent
 
 CLONE_THREAD = 0x00010000
 
@@ -58,6 +58,8 @@ class World:
         """
         if isinstance(event, SpawnEvent):
             self._apply_spawn(event)
+        elif isinstance(event, ExitEvent):
+            self._apply_exit(event)
         else:
             self._apply_syscall(event)
         return event
@@ -117,6 +119,16 @@ class World:
                 proc.regions.pop(start, None)  # S8
         elif name == "execve" and paired.path is not None:
             proc.name = paired.path.rsplit("/", 1)[-1]  # S10
+
+    def _apply_exit(self, event: ExitEvent) -> None:
+        # S11: a terminated process leaves the world, so its box disappears. The
+        # initial/root process is kept as the frame of reference (the whole app
+        # is torn down when it dies), and unknown pids are ignored.
+        if event.pid == self._initial_pid or event.pid not in self.processes:
+            self._pending.pop(event.pid, None)
+            return
+        del self.processes[event.pid]
+        self._pending.pop(event.pid, None)
 
     def _apply_spawn(self, event: SpawnEvent) -> None:
         parent = self._process_for(event.parent)

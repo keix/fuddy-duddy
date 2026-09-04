@@ -1,7 +1,7 @@
 """Contract for the wire->event decoder (SPEC.md D1-D4)."""
 
 from fuddy_duddy.decode import Decoder
-from fuddy_duddy.event import Phase, SpawnEvent
+from fuddy_duddy.event import ExitEvent, Phase, SpawnEvent
 from fuddy_duddy.syscalls_x86_64 import NR
 from fuddy_duddy.wire import WireEnter, WireExit, WireExited, WireSignaled, WireSpawn
 
@@ -53,10 +53,27 @@ def test_exit_reports_negative_result_on_failure():  # D2
     assert event.result == -2
 
 
-def test_process_end_yields_nothing():  # D3
+def test_exited_becomes_exit_event():  # D3
+    [event] = Decoder().push(WireExited(pid=7, ts=1, code=0))
+    assert isinstance(event, ExitEvent)
+    assert event.pid == 7
+    assert event.code == 0
+    assert event.signal is None
+
+
+def test_signaled_becomes_exit_event():  # D3
+    [event] = Decoder().push(WireSignaled(pid=7, ts=1, sig=9))
+    assert isinstance(event, ExitEvent)
+    assert event.pid == 7
+    assert event.signal == 9
+    assert event.code is None
+
+
+def test_exit_drops_dangling_pending_enter():  # D3
     decoder = Decoder()
-    assert decoder.push(WireExited(pid=7, ts=1, code=0)) == []
-    assert decoder.push(WireSignaled(pid=7, ts=1, sig=9)) == []
+    decoder.push(enter(NR["read"], args=(3,)))  # dies mid-syscall, no EXIT
+    [event] = decoder.push(WireExited(pid=7, ts=1, code=0))
+    assert isinstance(event, ExitEvent)
 
 
 def test_execve_carries_path():  # D1

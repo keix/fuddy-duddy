@@ -3,7 +3,7 @@ import sys
 
 from .app import App
 from .director import Director
-from .event import Event, Phase, SpawnEvent, SyscallEvent
+from .event import Event, ExitEvent, Phase, SpawnEvent, SyscallEvent
 from .live import LiveCollector
 from .model import Process, World
 from .scene import Scene
@@ -32,8 +32,9 @@ SCRIPT: list[tuple[int, Event]] = [
     (265, SyscallEvent(CHILD, "getdents64", Phase.EXIT, result=512)),
     (285, SyscallEvent(CHILD, "write", Phase.ENTER, fd=1)),
     (305, SyscallEvent(CHILD, "write", Phase.EXIT, result=512)),
+    (315, ExitEvent(pid=CHILD)),  # ls is done: the child box poofs away (S11)
     (325, SyscallEvent(SHELL, "wait4", Phase.ENTER)),
-    (345, SyscallEvent(SHELL, "wait4", Phase.EXIT, result=CHILD)),
+    (345, SyscallEvent(SHELL, "wait4", Phase.EXIT, result=CHILD)),  # shell reaps it
 ]
 
 

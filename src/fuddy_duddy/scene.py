@@ -22,7 +22,7 @@ by success or failure. All transient effects die well within 30 frames.
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from .event import Event, Phase, SpawnEvent
+from .event import Event, ExitEvent, Phase, SpawnEvent
 from .model import Process, World
 from .render import (
     BOUNDARY_Y,
@@ -162,6 +162,15 @@ class Scene:
             # R13: kick off the split flourish. The child's box comes from world
             # state (R12); this animation is the transient separation motion.
             self._splits.append(_Split(parent=event.parent, child=event.child))
+            return
+        if isinstance(event, ExitEvent):
+            # R15: the world already removed the box (S11); leave a short poof
+            # ring at its last spot so the disappearance reads as an event, not
+            # a glitch. Settles well within the 30-frame budget.
+            rect = self._rects.get(event.pid)
+            if rect is not None:
+                x, y, w, h = rect
+                self._rings.append(_Ring(x + w // 2, y + h // 2, _COL_DIM))
             return
         if event.phase is Phase.ENTER:
             origin_x = self._origin_x_for(event.pid)

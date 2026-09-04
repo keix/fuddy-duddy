@@ -16,3 +16,9 @@ collector/fixtures/fork_exec
 
 # stray trace dumps
 *.log
+
+# images / screenshots
+*.png
+*.jpg
+*.jpeg
+*.gif
